@@ -88,16 +88,39 @@ class HotelOption(BaseModel):
     retrieved_at: datetime
 
 
+class OpeningPeriod(BaseModel):
+    open_day: int = Field(ge=0, le=6)
+    open_hour: int = Field(ge=0, le=23)
+    open_minute: int = Field(ge=0, le=59)
+    close_day: int | None = Field(default=None, ge=0, le=6)
+    close_hour: int | None = Field(default=None, ge=0, le=23)
+    close_minute: int | None = Field(default=None, ge=0, le=59)
+
+
+class OpeningHours(BaseModel):
+    status: str = "UNKNOWN"
+    periods: list[OpeningPeriod] = Field(default_factory=list)
+    weekday_descriptions: list[str] = Field(default_factory=list)
+
+
 class PlaceCandidate(BaseModel):
     place_id: str
+    provider: str = "demo"
+    provider_id: str | None = None
     name: str
     category: str
+    types: list[str] = Field(default_factory=list)
     location: GeoPoint
     rating: float | None = Field(default=None, ge=0, le=5)
     rating_count: int | None = Field(default=None, ge=0)
     price: Money = Field(default_factory=lambda: Money(amount=0))
     maps_url: HttpUrl | None = None
     open_now: bool | None = None
+    opening_hours: OpeningHours | None = None
+    formatted_address: str | None = None
+    price_level: str | None = None
+    photo_reference: str | None = None
+    retrieved_at: datetime | None = None
     suggested_visit_minutes: int = Field(default=60, gt=0)
     weather_suitability: float = Field(default=1, ge=0, le=1)
     interest_tags: list[str] = Field(default_factory=list)

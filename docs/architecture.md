@@ -8,6 +8,7 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 - **Backend:** FastAPI exposes versioned REST endpoints. API keys and provider credentials remain server-side.
 - **Agent:** LangGraph owns the stateful planning transition. It delegates factual retrieval to typed providers and correctness checks to deterministic services.
 - **Providers:** flight, hotel, and place contracts have deterministic demo implementations. Live adapters can replace them without changing the graph.
+- **Places:** `PLACES_PROVIDER=demo` uses deterministic fixtures; `PLACES_PROVIDER=google` selects Places API (New) Text Search, Nearby Search, and Place Details through a focused server-side client. Google payloads are normalized before entering graph state.
 - **Planning services:** budget arithmetic, schedule validation, free-time feasibility, and outbound URL validation do not depend on an LLM.
 - **Database:** the Supabase migration creates trip, option, itinerary, event, alert, run, and tool-call records. RLS is enabled and browser roles are denied until authenticated ownership policies are introduced.
 
@@ -25,3 +26,9 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 The frontend can deploy to Vercel or Cloudflare-compatible hosting. The Python service can deploy to Railway, Render, or another ASGI host. Supabase hosts PostgreSQL. Configure the frontend with `VITE_TRIPPILOT_API_URL`; configure the backend only with server-side secrets described in `.env.example`.
 
 No browser code calls OpenRouter, Google, flight, hotel, weather, or Supabase service-role APIs directly.
+
+## Google Places cost and security boundary
+
+TripPilot uses explicit search and detail field masks rather than `*`. Search asks only for stable identity, display name, coordinates, types, rating counts, address, price level, current opening hours, and the provider-returned Maps URI. Place Details is called only when a caller explicitly needs details; search results are not expanded with an N+1 request pattern. Field masks affect Google Places billing, so new fields require a product need and review.
+
+The web-service API key exists only as `GOOGLE_MAPS_API_KEY` on the backend. Production Google Cloud credentials should be restricted to Places API (New) and to the deployed backend where practical. Returned Maps URLs pass the outbound HTTPS host validator. Curated repository photography remains in the UI; Google Place Photos are intentionally out of scope for this phase.

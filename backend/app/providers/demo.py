@@ -79,9 +79,34 @@ class DemoHotelProvider:
 
 class DemoPlacesProvider:
     async def search(self, request: TripConstraints) -> list[PlaceCandidate]:
+        _ = request
+        return self._places()
+
+    async def search_nearby(
+        self,
+        location: GeoPoint,
+        interests: list[str],
+        *,
+        radius_meters: int = 5000,
+        max_results: int = 10,
+    ) -> list[PlaceCandidate]:
+        _ = (location, radius_meters)
+        places = self._places()
+        if interests:
+            normalized = {interest.lower() for interest in interests}
+            places = [place for place in places if normalized.intersection(place.interest_tags)]
+        return places[:max_results]
+
+    async def get_details(self, place_id: str) -> PlaceCandidate | None:
+        return next((place for place in self._places() if place.place_id == place_id), None)
+
+    @staticmethod
+    def _places() -> list[PlaceCandidate]:
+        now = datetime.now(UTC)
         return [
             PlaceCandidate(
                 place_id="demo-fort-aguada",
+                provider_id="demo-fort-aguada",
                 name="Fort Aguada",
                 category="history",
                 location=GeoPoint(lat=15.4921, lng=73.7737),
@@ -93,9 +118,11 @@ class DemoPlacesProvider:
                 suggested_visit_minutes=75,
                 weather_suitability=0.9,
                 interest_tags=["history", "architecture"],
+                retrieved_at=now,
             ),
             PlaceCandidate(
                 place_id="demo-sinquerim-beach",
+                provider_id="demo-sinquerim-beach",
                 name="Sinquerim Beach",
                 category="beach",
                 location=GeoPoint(lat=15.5008, lng=73.7676),
@@ -107,9 +134,11 @@ class DemoPlacesProvider:
                 suggested_visit_minutes=60,
                 weather_suitability=0.95,
                 interest_tags=["beaches", "nature"],
+                retrieved_at=now,
             ),
             PlaceCandidate(
                 place_id="demo-museum-goa",
+                provider_id="demo-museum-goa",
                 name="Museum of Goa",
                 category="museum",
                 location=GeoPoint(lat=15.5595, lng=73.7979),
@@ -121,5 +150,6 @@ class DemoPlacesProvider:
                 suggested_visit_minutes=60,
                 weather_suitability=1,
                 interest_tags=["history", "art"],
+                retrieved_at=now,
             ),
         ]

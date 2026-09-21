@@ -4,7 +4,7 @@ TripPilot is a stateful AI travel operating system. A traveler describes a goal 
 
 The repository preserves the original Sunlit Cartography + Soft Bento interface while adding a typed FastAPI/LangGraph backend, provider boundaries, deterministic validation, a Supabase schema, tests, and CI.
 
-> Current provider status: **demo mode**. Flight, hotel, and place inventory is deterministic and visibly labelled “Demo data”; it is not current pricing. Live provider adapters and credentials remain a documented limitation.
+> Default provider status: **demo mode**. Flight and hotel inventory remains deterministic demo data. Places can use deterministic demo data or Google Places API (New) when `PLACES_PROVIDER=google` and a backend key are configured.
 
 ## What works
 
@@ -13,6 +13,7 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 - OpenRouter strict structured extraction in live mode, including one bounded validation retry
 - Structured follow-up questions when critical trip fields are missing
 - Concurrent typed flight, hotel, and place providers
+- Google Places API (New) adapter for destination, nearby, and details lookup
 - Centralized domain models and deterministic budget/schedule validation
 - Free-time feasibility, place scoring, and outbound-link security services
 - Shared frontend plan state and recoverable backend error UI
@@ -65,7 +66,7 @@ The browser defaults to `http://localhost:8000`; override it with `VITE_TRIPPILO
 
 ## Environment and security
 
-Copy `.env.example` and fill only the providers you use. Key settings include `TRAVEL_DATA_MODE`, OpenRouter/model values, database/Supabase values, Google and weather credentials, optional travel inventory credentials, and LangSmith observability values.
+Copy `.env.example` and fill only the providers you use. Key settings include `TRAVEL_DATA_MODE`, `PLACES_PROVIDER`, OpenRouter/model values, database/Supabase values, Google and weather credentials, optional travel inventory credentials, and LangSmith observability values. For Google mode, enable Places API (New), restrict the key to that API and the deployed backend where practical, then set `GOOGLE_MAPS_API_KEY` server-side.
 
 Never expose provider secrets or `SUPABASE_SERVICE_ROLE_KEY` through `VITE_` variables. The browser calls only TripPilot's backend.
 
@@ -96,7 +97,7 @@ The timestamped migration under `supabase/migrations/` creates the initial schem
 ## Known limitations
 
 - Demo mode intentionally maps requests to the deterministic Goa evaluation fixture; live mode uses OpenRouter extraction.
-- Live Google, weather, flight, and hotel adapters are not yet enabled.
+- Google Places is implemented but requires a project key for live verification; Routes, weather, flight, and hotel live adapters are not yet enabled.
 - The map remains the existing visual prototype.
 - Add-to-itinerary and disruption approval remain local UI interactions and are not persisted.
 - Authentication, ownership policies, full evaluations, and browser end-to-end tests remain incomplete.

@@ -11,6 +11,8 @@ from app.model_gateway.errors import ModelGatewayError, StructuredOutputValidati
 from app.model_gateway.openrouter import OpenRouterModelGateway
 from app.models.domain import PlanningRequest
 from app.providers.demo import DemoFlightProvider, DemoHotelProvider, DemoPlacesProvider
+from app.providers.errors import ProviderErrorCategory, ProviderException
+from app.providers.google import GooglePlacesClient, GooglePlacesProvider
 from app.services.planner import TripPlanner
 from app.services.trip_extraction import DemoTripExtractor, ModelTripExtractor, TripExtractor
 
@@ -18,7 +20,27 @@ router = APIRouter(prefix="/api/v1")
 
 
 def get_planner() -> TripPlanner:
-    return TripPlanner(DemoFlightProvider(), DemoHotelProvider(), DemoPlacesProvider())
+    settings = get_settings()
+    if settings.places_provider == "google":
+        if not settings.google_maps_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": "GOOGLE_MAPS_API_KEY is required when PLACES_PROVIDER=google",
+                },
+            )
+        places = GooglePlacesProvider(
+            GooglePlacesClient(
+                api_key=settings.google_maps_api_key,
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+            )
+        )
+    else:
+        places = DemoPlacesProvider()
+    data_mode = "live" if settings.places_provider == "google" else "demo"
+    return TripPlanner(DemoFlightProvider(), DemoHotelProvider(), places, data_mode=data_mode)
 
 
 def get_extractor() -> TripExtractor:
@@ -66,6 +88,18 @@ async def plan_trip(request: PlanningRequest):
         raise HTTPException(
             status_code=503,
             detail={"category": "PROVIDER_DOWN", "message": str(error)},
+        ) from error
+    except ProviderException as error:
+        status = 503
+        if error.category == ProviderErrorCategory.INVALID_REQUEST:
+            status = 422
+        elif error.category == ProviderErrorCategory.AUTH_FAILED:
+            status = 503
+        elif error.category == ProviderErrorCategory.RATE_LIMITED:
+            status = 429
+        raise HTTPException(
+            status_code=status,
+            detail={"category": error.category.value, "message": str(error)},
         ) from error
     if result.get("missing"):
         extraction = result["extraction"]

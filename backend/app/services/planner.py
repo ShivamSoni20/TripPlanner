@@ -22,10 +22,13 @@ class TripPlanner:
         flights: FlightProvider,
         hotels: HotelProvider,
         places: PlacesProvider,
+        *,
+        data_mode: str = "demo",
     ) -> None:
         self.flights = flights
         self.hotels = hotels
         self.places = places
+        self.data_mode = data_mode
 
     async def plan(self, constraints: TripConstraints) -> TripPlan:
         flight_options, hotel_options, places = await asyncio.gather(
@@ -52,7 +55,7 @@ class TripPlanner:
             status=TripStatus.READY,
             created_at=now,
             updated_at=now,
-            data_mode="demo",
+            data_mode=self.data_mode,
         )
         warnings = [] if budget.within_budget else ["Plan exceeds the requested budget"]
         return TripPlan(

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     app_env: Literal["development", "test", "production"] = "development"
     travel_data_mode: Literal["demo", "live"] = "demo"
+    places_provider: Literal["demo", "google"] = "demo"
     allowed_origins: str = "http://localhost:8080,http://localhost:3000"
     openrouter_api_key: str | None = None
     trip_agent_model: str = "openai/gpt-4.1-mini"
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     google_maps_api_key: str | None = None
     weather_api_key: str | None = None
     request_timeout_seconds: float = Field(default=12, ge=1, le=60)
+    provider_max_retries: int = Field(default=2, ge=0, le=2)
 
     @property
     def cors_origins(self) -> list[str]:

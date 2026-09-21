@@ -1,5 +1,13 @@
 # Failure analysis
 
+## Null provider ID passed normalization
+
+- **Failure:** the first malformed-record test accepted a Google result with `id: null` and created the internal ID `google:None`.
+- **Root cause:** dictionary-key presence was checked, but essential string content was not.
+- **Fix:** normalization now rejects empty or non-string place IDs and display names before creating a domain model.
+- **Regression:** the Google Places normalization suite covers missing identity, display name, and invalid coordinates.
+- **Current status:** fixed.
+
 ## Strict TypeScript optional-property regression
 
 - **Failure:** the Phase 2 baseline failed `tsc --noEmit` because an optional property was explicitly assigned `undefined` while `exactOptionalPropertyTypes` was enabled.
