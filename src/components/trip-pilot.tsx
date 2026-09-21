@@ -35,6 +35,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { createTripPlan, type TripPlanResponse } from "@/lib/trip-api";
 import goaHero from "@/assets/goa-hero.jpg";
 import fortImage from "@/assets/fort-aguada.jpg";
 import beachImage from "@/assets/goa-beach.jpg";
@@ -47,6 +48,9 @@ type AppStage = "prompt" | "planning" | "trip";
 type TripContextValue = {
   stage: AppStage;
   setStage: (value: AppStage) => void;
+  plan: TripPlanResponse | null;
+  planningError: string | null;
+  startPlanning: (prompt: string) => Promise<void>;
   view: TripView;
   setView: (value: TripView) => void;
   selectedStop: number;
@@ -68,10 +72,26 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [addedFort, setAddedFort] = useState(false);
   const [delayOpen, setDelayOpen] = useState(false);
   const [replanned, setReplanned] = useState(false);
+  const [plan, setPlan] = useState<TripPlanResponse | null>(null);
+  const [planningError, setPlanningError] = useState<string | null>(null);
+
+  const startPlanning = async (prompt: string) => {
+    setPlanningError(null);
+    setStage("planning");
+    try {
+      setPlan(await createTripPlan(prompt));
+      setStage("trip");
+    } catch (error) {
+      setPlanningError(error instanceof Error ? error.message : "Trip planning failed");
+    }
+  };
   const value = useMemo(
     () => ({
       stage,
       setStage,
+      plan,
+      planningError,
+      startPlanning,
       view,
       setView,
       selectedStop,
@@ -87,7 +107,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
         setView("itinerary");
       },
     }),
-    [stage, view, selectedStop, addedFort, delayOpen, replanned],
+    [stage, plan, planningError, view, selectedStop, addedFort, delayOpen, replanned],
   );
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>;
 }
@@ -110,7 +130,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 export function TripPrompt() {
-  const { setStage } = useTrip();
+  const { startPlanning } = useTrip();
   const [query, setQuery] = useState(
     "Goa for 5 days, two people, ₹30k. Beaches, nightlife and history. Keep it relaxed.",
   );
@@ -152,7 +172,7 @@ export function TripPrompt() {
           className="mt-10 w-full rounded-[28px] border bg-card p-3 text-left shadow-[0_24px_70px_-36px_color-mix(in_oklab,var(--foreground)_25%,transparent)]"
           onSubmit={(event) => {
             event.preventDefault();
-            if (query.trim()) setStage("planning");
+            if (query.trim()) void startPlanning(query.trim());
           }}
         >
           <label className="sr-only" htmlFor="trip-query">
@@ -214,34 +234,14 @@ export function TripPrompt() {
 }
 
 const planningSteps = [
-  ["Understanding your preferences", ""],
-  ["Searching flights", "18 options found"],
-  ["Comparing hotels", "24 options found"],
-  ["Finding places", "31 places found"],
-  ["Checking weather", "Clear skies, 29°"],
-  ["Calculating travel times", "12 routes checked"],
-  ["Optimizing itinerary", ""],
-  ["Validating ₹30,000 budget", ""],
+  "Understanding your constraints",
+  "Querying configured travel providers",
+  "Building a feasible itinerary",
+  "Validating schedule and budget",
 ];
 
 export function AgentProgress() {
-  const { setStage } = useTrip();
-  const [active, setActive] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(
-      () =>
-        setActive((current) => {
-          if (current >= planningSteps.length - 1) {
-            window.clearInterval(timer);
-            window.setTimeout(() => setStage("trip"), 850);
-            return current;
-          }
-          return current + 1;
-        }),
-      520,
-    );
-    return () => window.clearInterval(timer);
-  }, [setStage]);
+  const { planningError, setStage } = useTrip();
   return (
     <main className="min-h-screen bg-background p-5 md:p-10">
       <header className="mx-auto max-w-6xl">
@@ -259,26 +259,20 @@ export function AgentProgress() {
             Connecting the details so every day flows naturally.
           </p>
           <div className="mt-10 space-y-3">
-            {planningSteps.map(([label, result], index) => (
+            {planningSteps.map((label, index) => (
               <motion.div
                 initial={{ opacity: 0, x: -12 }}
-                animate={{ opacity: index <= active ? 1 : 0.36, x: 0 }}
+                animate={{ opacity: index === 0 ? 1 : 0.42, x: 0 }}
                 key={label}
                 className="flex items-center gap-4 rounded-2xl border bg-card px-4 py-3"
               >
                 <span
                   className={cn(
                     "flex size-7 items-center justify-center rounded-full",
-                    index < active
-                      ? "bg-mint"
-                      : index === active
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted",
+                    index === 0 ? "bg-primary text-primary-foreground" : "bg-muted",
                   )}
                 >
-                  {index < active ? (
-                    <Check className="size-4" />
-                  ) : index === active ? (
+                  {index === 0 ? (
                     <span className="size-2 animate-pulse rounded-full bg-primary-foreground" />
                   ) : (
                     <span className="size-2 rounded-full border" />
@@ -286,15 +280,24 @@ export function AgentProgress() {
                 </span>
                 <div>
                   <p className="font-semibold">{label}</p>
-                  {result && index < active && (
-                    <p className="text-sm text-muted-foreground">{result}</p>
-                  )}
                 </div>
               </motion.div>
             ))}
+            {planningError && (
+              <div
+                role="alert"
+                className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4"
+              >
+                <p className="font-semibold text-destructive">The planner could not be reached</p>
+                <p className="mt-1 text-sm text-muted-foreground">{planningError}</p>
+                <Button className="mt-4" variant="outline" onClick={() => setStage("prompt")}>
+                  Back to trip request
+                </Button>
+              </div>
+            )}
           </div>
         </div>
-        <TripMap compact selected={Math.min(active + 1, 5)} onSelect={() => undefined} />
+        <TripMap compact selected={1} onSelect={() => undefined} />
       </section>
     </main>
   );
@@ -438,7 +441,9 @@ function SectionHeading({
 }
 
 function TripHero() {
-  const { setView } = useTrip();
+  const { plan, setView } = useTrip();
+  const destination = plan?.trip.constraints.destination ?? "Goa";
+  const travelers = plan?.trip.constraints.travelers ?? 2;
   return (
     <section className="relative min-h-[390px] overflow-hidden rounded-[28px] text-primary-foreground">
       <img
@@ -451,16 +456,18 @@ function TripHero() {
       <div className="absolute inset-0 bg-[linear-gradient(90deg,color-mix(in_oklab,var(--foreground)_82%,transparent),transparent_78%)]" />
       <div className="relative flex min-h-[390px] max-w-2xl flex-col justify-end p-6 md:p-10">
         <div className="mb-auto flex w-fit items-center gap-2 rounded-full bg-background/90 px-3 py-2 text-sm font-semibold text-foreground">
-          <span className="size-2 rounded-full bg-aqua" /> Trip ready · all systems checked
+          <span className="size-2 rounded-full bg-aqua" /> Trip ready ·{" "}
+          {plan?.trip.dataMode === "live" ? "Live data" : "Demo data"}
         </div>
         <p className="text-sm font-bold uppercase">India · 12–17 November</p>
-        <h1 className="mt-2 text-6xl font-bold md:text-8xl">GOA</h1>
+        <h1 className="mt-2 text-6xl font-bold uppercase md:text-8xl">{destination}</h1>
         <div className="mt-5 flex flex-wrap gap-3 text-sm font-semibold">
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <CalendarDays className="mr-2 inline size-4" />5 days
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
-            <Users className="mr-2 inline size-4" />2 travellers
+            <Users className="mr-2 inline size-4" />
+            {travelers} travellers
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <CloudSun className="mr-2 inline size-4" />
@@ -479,19 +486,33 @@ function TripHero() {
 }
 
 function BudgetMeter({ compact = false }: { compact?: boolean }) {
+  const { plan } = useTrip();
+  const spent = plan?.budget.total ?? 28_450;
+  const limit = plan?.trip.constraints.budget.amount ?? 30_000;
+  const remaining = plan?.budget.remaining ?? 1_550;
+  const percentage = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
   return (
     <div className={cn("rounded-3xl border bg-mint/45", compact ? "p-5" : "p-6")}>
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm font-semibold text-muted-foreground">Trip budget</p>
           <p className="mt-1 text-2xl font-bold">
-            ₹28,450 <span className="text-base font-medium text-muted-foreground">/ ₹30,000</span>
+            ₹{spent.toLocaleString("en-IN")}{" "}
+            <span className="text-base font-medium text-muted-foreground">
+              / ₹{limit.toLocaleString("en-IN")}
+            </span>
           </p>
         </div>
-        <span className="rounded-full bg-card px-3 py-1 text-sm font-bold">₹1,550 left</span>
+        <span className="rounded-full bg-card px-3 py-1 text-sm font-bold">
+          ₹{remaining.toLocaleString("en-IN")} left
+        </span>
       </div>
-      <Progress value={94.8} className="mt-5 h-2.5 bg-card [&>div]:bg-foreground" />
-      <p className="mt-3 text-sm text-muted-foreground">On track, with a 5% buffer.</p>
+      <Progress value={percentage} className="mt-5 h-2.5 bg-card [&>div]:bg-foreground" />
+      <p className="mt-3 text-sm text-muted-foreground">
+        {remaining >= 0
+          ? "On track within your requested budget."
+          : "Over budget — review options."}
+      </p>
     </div>
   );
 }
@@ -1203,19 +1224,28 @@ function MapView() {
 }
 
 function Budget() {
+  const { plan } = useTrip();
+  const budget = plan?.budget;
+  const limit = plan?.trip.constraints.budget.amount ?? 30_000;
+  const total = budget?.total ?? 28_450;
+  const remaining = budget?.remaining ?? 1_550;
   const rows = [
-    { label: "Flights", value: "₹8,400", pct: 28, color: "bg-sky" },
-    { label: "Hotel", value: "₹8,250", pct: 29, color: "bg-lavender" },
-    { label: "Food", value: "₹5,400", pct: 18, color: "bg-butter" },
-    { label: "Activities", value: "₹2,900", pct: 10, color: "bg-aqua" },
-    { label: "Local travel", value: "₹3,500", pct: 12, color: "bg-peach" },
-  ];
+    { label: "Flights", amount: budget?.transport ?? 8_400, color: "bg-sky" },
+    { label: "Hotel", amount: budget?.hotel ?? 8_250, color: "bg-lavender" },
+    { label: "Food", amount: budget?.food ?? 5_400, color: "bg-butter" },
+    { label: "Activities", amount: budget?.activities ?? 2_900, color: "bg-aqua" },
+    { label: "Local travel", amount: budget?.localTransport ?? 3_500, color: "bg-peach" },
+  ].map((row) => ({
+    ...row,
+    value: `₹${row.amount.toLocaleString("en-IN")}`,
+    pct: limit > 0 ? Math.round((row.amount / limit) * 100) : 0,
+  }));
   return (
     <>
       <SectionHeading
         eyebrow="Budget guardrail"
-        title="₹28,450 / ₹30,000"
-        copy="You still have ₹1,550 for the spontaneous bits."
+        title={`₹${total.toLocaleString("en-IN")} / ₹${limit.toLocaleString("en-IN")}`}
+        copy={`You still have ₹${remaining.toLocaleString("en-IN")} for the spontaneous bits.`}
       />
       <div className="grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
         <section className="rounded-[28px] border bg-card p-6 md:p-8">

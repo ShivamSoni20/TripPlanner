@@ -1,0 +1,36 @@
+# Failure analysis
+
+## Fabricated planning counts
+
+- **Failure:** the prototype displayed fixed counts such as 18 flights regardless of any search.
+- **Root cause:** a timer drove presentation-only progress.
+- **Fix:** the prompt now calls the backend and the false counts were removed. Demo results carry a visible demo label.
+- **Regression:** API tests assert returned collections; the frontend must derive any future count from those collections.
+
+## Disconnected budget totals
+
+- **Failure:** overview and budget screens each contained independent hardcoded totals.
+- **Root cause:** the prototype had no shared domain plan.
+- **Fix:** the backend performs authoritative arithmetic and both frontend budget surfaces consume the shared `TripPlan` result.
+- **Regression:** budget unit tests assert category sum, remaining amount, and overflow status.
+
+## Unsafe outbound URLs
+
+- **Failure:** a future provider adapter could have passed arbitrary schemes or hosts into booking buttons.
+- **Root cause:** the prototype had static links and no trust boundary.
+- **Fix:** a deterministic validator permits HTTPS and approved provider domains only.
+- **Regression:** tests reject non-HTTPS and unapproved domains.
+
+## Impossible schedule transitions
+
+- **Failure:** independently assembled activities could overlap or start before travel completes.
+- **Root cause:** UI fixtures had no central schedule validator.
+- **Fix:** planning fails validation on overlap or insufficient travel time before a plan is returned.
+- **Regression:** schedule tests cover both overlap and travel-buffer violations.
+
+## Supabase CLI produced no project files
+
+- **Failure:** the Windows `npx supabase init` runner exited without diagnostics or generated output.
+- **Root cause:** the local npm runner did not execute the downloaded CLI correctly in this environment.
+- **Fix:** the standard timestamped migration layout was created directly; the SQL remains compatible with Supabase CLI migration commands.
+- **Regression:** CI should add a local database reset check once Docker-backed Supabase is available.
