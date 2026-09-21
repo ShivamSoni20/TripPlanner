@@ -11,6 +11,7 @@ node_modules
 backend/.venv
 backend/.pytest_cache
 backend/.ruff_cache
+*.egg-info/
 **/__pycache__/
 *.pyc
 dist
