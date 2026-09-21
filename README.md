@@ -10,6 +10,8 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 
 - Natural-language trip submission from the existing UI
 - FastAPI planning API invoked through a real LangGraph workflow
+- OpenRouter strict structured extraction in live mode, including one bounded validation retry
+- Structured follow-up questions when critical trip fields are missing
 - Concurrent typed flight, hotel, and place providers
 - Centralized domain models and deterministic budget/schedule validation
 - Free-time feasibility, place scoring, and outbound-link security services
@@ -93,7 +95,7 @@ The timestamped migration under `supabase/migrations/` creates the initial schem
 
 ## Known limitations
 
-- Demo mode currently maps requests to the deterministic Goa evaluation fixture.
+- Demo mode intentionally maps requests to the deterministic Goa evaluation fixture; live mode uses OpenRouter extraction.
 - Live Google, weather, flight, and hotel adapters are not yet enabled.
 - The map remains the existing visual prototype.
 - Add-to-itinerary and disruption approval remain local UI interactions and are not persisted.

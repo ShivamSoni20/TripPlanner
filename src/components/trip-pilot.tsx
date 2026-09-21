@@ -50,6 +50,7 @@ type TripContextValue = {
   setStage: (value: AppStage) => void;
   plan: TripPlanResponse | null;
   planningError: string | null;
+  followUpQuestion: string | null;
   startPlanning: (prompt: string) => Promise<void>;
   view: TripView;
   setView: (value: TripView) => void;
@@ -74,12 +75,20 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [replanned, setReplanned] = useState(false);
   const [plan, setPlan] = useState<TripPlanResponse | null>(null);
   const [planningError, setPlanningError] = useState<string | null>(null);
+  const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
 
   const startPlanning = async (prompt: string) => {
     setPlanningError(null);
+    setFollowUpQuestion(null);
     setStage("planning");
     try {
-      setPlan(await createTripPlan(prompt));
+      const response = await createTripPlan(prompt);
+      if ("missing" in response) {
+        setFollowUpQuestion(response.question);
+        setStage("prompt");
+        return;
+      }
+      setPlan(response);
       setStage("trip");
     } catch (error) {
       setPlanningError(error instanceof Error ? error.message : "Trip planning failed");
@@ -91,6 +100,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setStage,
       plan,
       planningError,
+      followUpQuestion,
       startPlanning,
       view,
       setView,
@@ -107,7 +117,17 @@ export function TripProvider({ children }: { children: ReactNode }) {
         setView("itinerary");
       },
     }),
-    [stage, plan, planningError, view, selectedStop, addedFort, delayOpen, replanned],
+    [
+      stage,
+      plan,
+      planningError,
+      followUpQuestion,
+      view,
+      selectedStop,
+      addedFort,
+      delayOpen,
+      replanned,
+    ],
   );
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>;
 }
@@ -130,7 +150,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 export function TripPrompt() {
-  const { startPlanning } = useTrip();
+  const { followUpQuestion, startPlanning } = useTrip();
   const [query, setQuery] = useState(
     "Goa for 5 days, two people, ₹30k. Beaches, nightlife and history. Keep it relaxed.",
   );
@@ -175,6 +195,11 @@ export function TripPrompt() {
             if (query.trim()) void startPlanning(query.trim());
           }}
         >
+          {followUpQuestion && (
+            <div role="status" className="mx-2 mb-2 rounded-2xl bg-butter/55 px-4 py-3 text-sm">
+              <span className="font-semibold">One detail before I plan:</span> {followUpQuestion}
+            </div>
+          )}
           <label className="sr-only" htmlFor="trip-query">
             Describe your trip
           </label>

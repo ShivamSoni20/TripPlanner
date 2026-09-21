@@ -2,12 +2,13 @@
 
 ## Current graph
 
-The compiled LangGraph contains two explicit nodes:
+The compiled LangGraph currently contains three explicit nodes:
 
-1. `validate_constraints` rejects missing state before any provider work.
-2. `plan_trip` queries typed providers concurrently, builds the plan, validates the schedule, and calculates the budget.
+1. `parse_constraints` uses the deterministic fixture extractor in demo mode or strict OpenRouter structured output in live mode.
+2. `validate_constraints` rejects missing or invalid state before any provider work.
+3. `plan_trip` queries typed providers concurrently, builds the plan, validates the schedule, and calculates the budget.
 
-The conditional edge stops invalid work before the planning node. `TripAgentState` carries constraints, the completed plan, warnings, errors, and revision count.
+The parsing edge returns a structured `needs_input` result when critical fields are absent. Invalid model output is retried once with Pydantic validation feedback, then fails gracefully. The conditional validation edge stops invalid work before the planning node. `TripAgentState` carries the request, extraction result, constraints, completed plan, warnings, errors, and revision count.
 
 ## Correctness boundary
 
@@ -24,7 +25,7 @@ Provider outputs use Pydantic models before they enter state. Demo values are de
 
 ## Planned production nodes
 
-The next graph expansion separates request extraction, flights, hotels, places, weather, routes, candidate generation, optimization, schedule validation, and finalization. Weather and route nodes require configured live adapters. OpenRouter structured output will parse free-form constraints when a key is present; demo mode retains the canonical Goa fixture.
+The next graph expansion separates flights, hotels, places, weather, routes, candidate generation, optimization, schedule validation, and finalization. Weather and route nodes require configured live adapters. OpenRouter now parses free-form constraints when live mode and a key are configured; demo mode retains the canonical Goa fixture.
 
 ## Failures and retries
 

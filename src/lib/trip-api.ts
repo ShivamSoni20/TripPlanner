@@ -10,6 +10,14 @@ export interface TripPlanResponse {
   warnings: string[];
 }
 
+export interface NeedsInputResponse {
+  status: "needs_input";
+  missing: string[];
+  question: string;
+}
+
+export type PlanningResponse = TripPlanResponse | NeedsInputResponse;
+
 type ApiTripPlanResponse = {
   trip: {
     id: string;
@@ -69,8 +77,10 @@ function normalizePlan(plan: ApiTripPlanResponse): TripPlanResponse {
         preferences: {
           interests: constraints.preferences.interests,
           pace: constraints.preferences.pace,
-          hotelStyle: constraints.preferences.hotel_style ?? undefined,
           transportPreferences: constraints.preferences.transport_preferences,
+          ...(constraints.preferences.hotel_style
+            ? { hotelStyle: constraints.preferences.hotel_style }
+            : {}),
         },
       },
     },
@@ -98,7 +108,7 @@ const API_URL = import.meta.env["VITE_TRIPPILOT_API_URL"] ?? "http://localhost:8
 export async function createTripPlan(
   prompt: string,
   signal?: AbortSignal,
-): Promise<TripPlanResponse> {
+): Promise<PlanningResponse> {
   const requestInit: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -109,5 +119,22 @@ export async function createTripPlan(
   if (!response.ok) {
     throw new Error(`Trip planning failed (${response.status})`);
   }
-  return normalizePlan((await response.json()) as ApiTripPlanResponse);
+  const payload: unknown = await response.json();
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "status" in payload &&
+    payload.status === "needs_input" &&
+    "missing" in payload &&
+    Array.isArray(payload.missing) &&
+    "question" in payload &&
+    typeof payload.question === "string"
+  ) {
+    return {
+      status: "needs_input",
+      missing: payload.missing.filter((item): item is string => typeof item === "string"),
+      question: payload.question,
+    };
+  }
+  return normalizePlan(payload as ApiTripPlanResponse);
 }

@@ -1,5 +1,13 @@
 # Failure analysis
 
+## Strict TypeScript optional-property regression
+
+- **Failure:** the Phase 2 baseline failed `tsc --noEmit` because an optional property was explicitly assigned `undefined` while `exactOptionalPropertyTypes` was enabled.
+- **Root cause:** the API normalizer treated omission and an explicit undefined value as equivalent.
+- **Fix:** the normalizer now conditionally spreads the property only when the backend supplied a value.
+- **Regression:** Phase 2 verification runs strict TypeScript before each commit.
+- **Current status:** fixed.
+
 ## Fabricated planning counts
 
 - **Failure:** the prototype displayed fixed counts such as 18 flights regardless of any search.

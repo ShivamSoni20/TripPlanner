@@ -1,14 +1,18 @@
 import json
 from collections.abc import AsyncIterator
-from datetime import date
+from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.agent.graph import build_planning_graph
-from app.models.domain import Money, Pace, PlanningRequest, TripConstraints, TripPreferences
+from app.core.config import get_settings
+from app.model_gateway.errors import ModelGatewayError, StructuredOutputValidationError
+from app.model_gateway.openrouter import OpenRouterModelGateway
+from app.models.domain import PlanningRequest
 from app.providers.demo import DemoFlightProvider, DemoHotelProvider, DemoPlacesProvider
 from app.services.planner import TripPlanner
+from app.services.trip_extraction import DemoTripExtractor, ModelTripExtractor, TripExtractor
 
 router = APIRouter(prefix="/api/v1")
 
@@ -17,18 +21,24 @@ def get_planner() -> TripPlanner:
     return TripPlanner(DemoFlightProvider(), DemoHotelProvider(), DemoPlacesProvider())
 
 
-def demo_constraints() -> TripConstraints:
-    return TripConstraints(
-        origin="Indore",
-        destination="Goa",
-        start_date=date(2026, 11, 12),
-        end_date=date(2026, 11, 17),
-        travelers=2,
-        budget=Money(amount=30_000),
-        preferences=TripPreferences(
-            interests=["beaches", "history", "nightlife"], pace=Pace.RELAXED
-        ),
+def get_extractor() -> TripExtractor:
+    settings = get_settings()
+    if settings.travel_data_mode == "demo":
+        return DemoTripExtractor()
+    if not settings.openrouter_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "category": "AUTH_FAILED",
+                "message": "OPENROUTER_API_KEY is required in live mode",
+            },
+        )
+    gateway = OpenRouterModelGateway(
+        api_key=settings.openrouter_api_key,
+        model=settings.trip_agent_model,
+        timeout_seconds=settings.request_timeout_seconds,
     )
+    return ModelTripExtractor(gateway)
 
 
 @router.get("/health")
@@ -38,15 +48,34 @@ async def health() -> dict[str, str]:
 
 @router.post("/trips/plan")
 async def plan_trip(request: PlanningRequest):
-    # Demo mode intentionally maps the canonical portfolio prompt to deterministic,
-    # labeled provider results. Live mode will use validated model extraction.
-    _ = request
-    graph = build_planning_graph(get_planner())
-    result = await graph.ainvoke(
-        {"request_id": "demo-request", "constraints": demo_constraints(), "revision_count": 0}
-    )
+    graph = build_planning_graph(get_planner(), get_extractor())
+    try:
+        result = await graph.ainvoke(
+            {"request_id": str(uuid4()), "prompt": request.prompt, "revision_count": 0}
+        )
+    except StructuredOutputValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "category": "INVALID_MODEL_OUTPUT",
+                "message": "The trip request could not be structured after one retry",
+                "validation_errors": error.errors,
+            },
+        ) from error
+    except ModelGatewayError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"category": "PROVIDER_DOWN", "message": str(error)},
+        ) from error
+    if result.get("missing"):
+        extraction = result["extraction"]
+        return {
+            "status": "needs_input",
+            "missing": extraction.missing,
+            "question": extraction.question,
+        }
     if result.get("errors"):
-        return {"errors": result["errors"]}
+        raise HTTPException(status_code=422, detail={"errors": result["errors"]})
     return result["plan"]
 
 
