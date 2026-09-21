@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime, time
 
 from app.models.domain import (
@@ -6,6 +7,8 @@ from app.models.domain import (
     HotelOption,
     Money,
     PlaceCandidate,
+    RouteEstimate,
+    RouteMatrixEntry,
     TripConstraints,
 )
 
@@ -153,3 +156,64 @@ class DemoPlacesProvider:
                 retrieved_at=now,
             ),
         ]
+
+
+def _haversine_distance_meters(p1: GeoPoint, p2: GeoPoint) -> int:
+    R = 6371000.0  # Earth radius in meters
+    lat1, lon1 = math.radians(p1.lat), math.radians(p1.lng)
+    lat2, lon2 = math.radians(p2.lat), math.radians(p2.lng)
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2.0) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return int(R * c)
+
+
+class DemoRoutesProvider:
+    async def compute_route(
+        self,
+        origin: GeoPoint,
+        destination: GeoPoint,
+        *,
+        departure_at: datetime | None = None,
+    ) -> RouteEstimate:
+        _ = departure_at
+        meters = _haversine_distance_meters(origin, destination)
+        km = meters / 1000.0
+        # Estimate ~30 km/h driving speed = 2 mins per km, min 3 mins
+        duration_minutes = max(3, math.ceil(km * 2.0))
+        return RouteEstimate(
+            origin=origin,
+            destination=destination,
+            distance_meters=meters,
+            duration_minutes=duration_minutes,
+            travel_mode="DRIVE",
+            provider="demo",
+            retrieved_at=datetime.now(UTC),
+        )
+
+    async def compute_matrix(
+        self,
+        origins: list[GeoPoint],
+        destinations: list[GeoPoint],
+        *,
+        departure_at: datetime | None = None,
+    ) -> list[RouteMatrixEntry]:
+        _ = departure_at
+        results: list[RouteMatrixEntry] = []
+        for o_idx, origin in enumerate(origins):
+            for d_idx, dest in enumerate(destinations):
+                meters = _haversine_distance_meters(origin, dest)
+                km = meters / 1000.0
+                duration_minutes = max(3, math.ceil(km * 2.0))
+                results.append(
+                    RouteMatrixEntry(
+                        origin_index=o_idx,
+                        destination_index=d_idx,
+                        distance_meters=meters,
+                        duration_minutes=duration_minutes,
+                        route_exists=True,
+                        provider="demo",
+                    )
+                )
+        return results

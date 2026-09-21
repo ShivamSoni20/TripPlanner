@@ -10,7 +10,7 @@ Run:
 backend\.venv\Scripts\python.exe -m pytest backend -q
 ```
 
-Result on 21 September 2026: **7 tests passed**. These tests cover budget reconciliation, schedule overlap/travel validation, free-time hard feasibility, booking URL security, and the planning API. They are correctness tests, not a statistically meaningful planning benchmark.
+Result on 22 September 2026: **42 tests passed**. These tests cover OpenRouter structured extraction, Google Places normalization, Google Routes duration parsing & matrix bounds, Smart Explorer feasibility & ranking, budget reconciliation, schedule travel validation, booking URL security, health provider status, and non-Goa itinerary planning. They are correctness tests, not a statistically meaningful planning benchmark.
 
 ## Benchmark status
 

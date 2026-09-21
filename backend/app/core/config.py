@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     travel_data_mode: Literal["demo", "live"] = "demo"
     places_provider: Literal["demo", "google"] = "demo"
+    routes_provider: Literal["demo", "google"] = "demo"
+    routes_travel_mode: str = "DRIVE"
+    routes_routing_preference: str = "TRAFFIC_UNAWARE"
     allowed_origins: str = "http://localhost:8080,http://localhost:3000"
     openrouter_api_key: str | None = None
     trip_agent_model: str = "openai/gpt-4.1-mini"

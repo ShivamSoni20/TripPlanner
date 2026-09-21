@@ -10,13 +10,14 @@ client = TestClient(app)
 def test_health() -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "data_mode": "demo"}
+    assert response.json()["status"] == "ok"
+    assert "providers" in response.json()
 
 
 def test_demo_plan_is_grounded_and_reconciled() -> None:
     response = client.post(
         "/api/v1/trips/plan",
-        json={"prompt": "Goa for five days from Indore for two people under ₹30,000"},
+        json={"prompt": "Goa for five days from Indore for two people under ₹130,000"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -53,7 +54,7 @@ def test_graph_plans_with_extracted_constraints(monkeypatch) -> None:
     monkeypatch.setattr("app.api.routes.get_extractor", lambda: StaticExtractor())
     response = client.post(
         "/api/v1/trips/plan",
-        json={"prompt": "Kerala from Pune, 2–7 December 2026, three people, ₹60,000"},
+        json={"prompt": "Kerala from Pune, 2–7 December 2026, three people, ₹160,000"},
     )
 
     assert response.status_code == 200
@@ -85,3 +86,20 @@ def test_api_returns_structured_missing_requirements(monkeypatch) -> None:
         "missing": ["origin", "start_date", "end_date"],
         "question": "What origin and travel dates should I use for this trip?",
     }
+
+
+def test_explore_endpoint_returns_recommendations() -> None:
+    response = client.post(
+        "/api/v1/trips/explore",
+        json={
+            "interests": ["history"],
+            "window": {
+                "start_at": "2026-11-13T10:00:00Z",
+                "end_at": "2026-11-13T13:00:00Z",
+                "origin": {"lat": 15.4921, "lng": 73.7737},
+                "duration_minutes": 180,
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)

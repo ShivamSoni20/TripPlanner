@@ -1,12 +1,23 @@
-import type { BudgetBreakdown, Trip } from "@/domain/trip";
+import type {
+  BudgetBreakdown,
+  DataSourceStatus,
+  ExploreRequest,
+  FlightOption,
+  HotelOption,
+  ItineraryItem,
+  PlaceCandidate,
+  PlaceRecommendation,
+  Trip,
+} from "@/domain/trip";
 
 export interface TripPlanResponse {
   trip: Trip;
-  flights: unknown[];
-  hotels: unknown[];
-  places: unknown[];
-  itinerary: unknown[];
+  flights: FlightOption[];
+  hotels: HotelOption[];
+  places: PlaceCandidate[];
+  itinerary: ItineraryItem[];
   budget: BudgetBreakdown;
+  sources?: DataSourceStatus;
   warnings: string[];
 }
 
@@ -40,10 +51,10 @@ type ApiTripPlanResponse = {
     updated_at: string;
     data_mode: "demo" | "live";
   };
-  flights: unknown[];
-  hotels: unknown[];
-  places: unknown[];
-  itinerary: unknown[];
+  flights: FlightOption[];
+  hotels: HotelOption[];
+  places: PlaceCandidate[];
+  itinerary: ItineraryItem[];
   budget: {
     transport: number;
     hotel: number;
@@ -55,6 +66,7 @@ type ApiTripPlanResponse = {
     currency: string;
     within_budget: boolean;
   };
+  sources?: DataSourceStatus;
   warnings: string[];
 };
 
@@ -84,10 +96,10 @@ function normalizePlan(plan: ApiTripPlanResponse): TripPlanResponse {
         },
       },
     },
-    flights: plan.flights,
-    hotels: plan.hotels,
-    places: plan.places,
-    itinerary: plan.itinerary,
+    flights: plan.flights || [],
+    hotels: plan.hotels || [],
+    places: plan.places || [],
+    itinerary: plan.itinerary || [],
     budget: {
       transport: plan.budget.transport,
       hotel: plan.budget.hotel,
@@ -99,10 +111,10 @@ function normalizePlan(plan: ApiTripPlanResponse): TripPlanResponse {
       currency: plan.budget.currency,
       withinBudget: plan.budget.within_budget,
     },
-    warnings: plan.warnings,
+    sources: plan.sources,
+    warnings: plan.warnings || [],
   };
 }
-
 const API_URL = import.meta.env["VITE_TRIPPILOT_API_URL"] ?? "http://localhost:8000";
 
 export async function createTripPlan(
@@ -115,7 +127,7 @@ export async function createTripPlan(
     body: JSON.stringify({ prompt }),
     ...(signal ? { signal } : {}),
   };
-  const response = await fetch(`${API_URL}/api/v1/trips/plan`, requestInit);
+  const response = await fetch(`/api/v1/trips/plan`, requestInit);
   if (!response.ok) {
     throw new Error(`Trip planning failed (${response.status})`);
   }
@@ -137,4 +149,36 @@ export async function createTripPlan(
     };
   }
   return normalizePlan(payload as ApiTripPlanResponse);
+}
+
+export async function exploreNearbyPlaces(
+  request: ExploreRequest,
+  signal?: AbortSignal,
+): Promise<PlaceRecommendation[]> {
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      interests: request.interests,
+      window: {
+        start_at: request.window.startAt,
+        end_at: request.window.endAt,
+        origin: request.window.origin,
+        next_destination: request.window.nextDestination,
+        duration_minutes: request.window.durationMinutes,
+      },
+      excluded_place_ids: request.excludedPlaceIds || [],
+      remaining_budget: request.remainingBudget,
+    }),
+    ...(signal ? { signal } : {}),
+  };
+  const response = await fetch(`/api/v1/trips/explore`, requestInit);
+  if (!response.ok) {
+    throw new Error(`Explore request failed (${response.status})`);
+  }
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload as PlaceRecommendation[];
 }

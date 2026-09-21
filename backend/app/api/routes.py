@@ -4,23 +4,44 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from app.agent.graph import build_planning_graph
 from app.core.config import get_settings
 from app.model_gateway.errors import ModelGatewayError, StructuredOutputValidationError
 from app.model_gateway.openrouter import OpenRouterModelGateway
-from app.models.domain import PlanningRequest
-from app.providers.demo import DemoFlightProvider, DemoHotelProvider, DemoPlacesProvider
+from app.models.domain import DataSourceStatus, PlaceRecommendation, PlanningRequest, TimeWindow
+from app.providers.demo import (
+    DemoFlightProvider,
+    DemoHotelProvider,
+    DemoPlacesProvider,
+    DemoRoutesProvider,
+)
 from app.providers.errors import ProviderErrorCategory, ProviderException
-from app.providers.google import GooglePlacesClient, GooglePlacesProvider
+from app.providers.google import (
+    GooglePlacesClient,
+    GooglePlacesProvider,
+    GoogleRoutesClient,
+    GoogleRoutesProvider,
+)
+from app.services.explorer import ExplorerService
 from app.services.planner import TripPlanner
 from app.services.trip_extraction import DemoTripExtractor, ModelTripExtractor, TripExtractor
 
 router = APIRouter(prefix="/api/v1")
 
 
+class ExploreRequest(BaseModel):
+    interests: list[str] = Field(default_factory=list)
+    window: TimeWindow
+    excluded_place_ids: list[str] = Field(default_factory=list)
+    remaining_budget: int | None = None
+
+
 def get_planner() -> TripPlanner:
     settings = get_settings()
+
+    # Places provider
     if settings.places_provider == "google":
         if not settings.google_maps_api_key:
             raise HTTPException(
@@ -39,8 +60,53 @@ def get_planner() -> TripPlanner:
         )
     else:
         places = DemoPlacesProvider()
-    data_mode = "live" if settings.places_provider == "google" else "demo"
-    return TripPlanner(DemoFlightProvider(), DemoHotelProvider(), places, data_mode=data_mode)
+
+    # Routes provider
+    if settings.routes_provider == "google":
+        if not settings.google_maps_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": "GOOGLE_MAPS_API_KEY is required when ROUTES_PROVIDER=google",
+                },
+            )
+        routes = GoogleRoutesProvider(
+            GoogleRoutesClient(
+                api_key=settings.google_maps_api_key,
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+            ),
+            travel_mode=settings.routes_travel_mode,
+            routing_preference=settings.routes_routing_preference,
+        )
+    else:
+        routes = DemoRoutesProvider()
+
+    model_status = "live" if settings.travel_data_mode == "live" else "demo"
+    data_mode = (
+        "live"
+        if (settings.places_provider == "google" or settings.routes_provider == "google")
+        else "demo"
+    )
+
+    sources = DataSourceStatus(
+        model=model_status,
+        flights="demo",
+        hotels="demo",
+        places=settings.places_provider,
+        routes=settings.routes_provider,
+        weather="unavailable",
+    )
+
+    return TripPlanner(
+        DemoFlightProvider(),
+        DemoHotelProvider(),
+        places,
+        routes,
+        data_mode=data_mode,
+        sources=sources,
+    )
 
 
 def get_extractor() -> TripExtractor:
@@ -64,8 +130,19 @@ def get_extractor() -> TripExtractor:
 
 
 @router.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "data_mode": "demo"}
+async def health_check():
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "providers": {
+            "model": "live" if settings.travel_data_mode == "live" else "demo",
+            "places": settings.places_provider,
+            "routes": settings.routes_provider,
+            "flights": "demo",
+            "hotels": "demo",
+            "weather": "unavailable",
+        },
+    }
 
 
 @router.post("/trips/plan")
@@ -113,15 +190,34 @@ async def plan_trip(request: PlanningRequest):
     return result["plan"]
 
 
+@router.post("/trips/explore", response_model=list[PlaceRecommendation])
+async def explore_places(request: ExploreRequest):
+    planner = get_planner()
+    explorer = ExplorerService(planner.places, planner.routes)
+    try:
+        return await explorer.explore(
+            window=request.window,
+            interests=request.interests,
+            excluded_place_ids=request.excluded_place_ids,
+            remaining_budget=request.remaining_budget,
+        )
+    except ProviderException as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"category": error.category.value, "message": str(error)},
+        ) from error
+
+
 async def planning_events() -> AsyncIterator[str]:
     events = [
-        ("constraints.parsed", {"origin": "Indore", "destination": "Goa"}),
-        ("flights.completed", {"count": 3, "provider": "demo"}),
-        ("hotels.completed", {"count": 3, "provider": "demo"}),
-        ("places.completed", {"count": 3, "provider": "demo"}),
+        ("constraints.parsed", {}),
+        ("flights.completed", {}),
+        ("hotels.completed", {}),
+        ("places.completed", {}),
+        ("routes.completed", {}),
         ("itinerary.optimizing", {}),
-        ("budget.validated", {"limit": 30000}),
-        ("plan.completed", {"data_mode": "demo"}),
+        ("budget.validated", {}),
+        ("plan.completed", {}),
     ]
     for event, data in events:
         yield f"event: {event}\ndata: {json.dumps(data)}\n\n"

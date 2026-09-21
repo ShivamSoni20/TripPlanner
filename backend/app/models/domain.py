@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -126,6 +126,35 @@ class PlaceCandidate(BaseModel):
     interest_tags: list[str] = Field(default_factory=list)
 
 
+class RouteEstimate(BaseModel):
+    origin: GeoPoint
+    destination: GeoPoint
+    distance_meters: int = Field(ge=0)
+    duration_minutes: int = Field(ge=0)
+    travel_mode: str = "DRIVE"
+    provider: str = "demo"
+    polyline: str | None = None
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RouteMatrixEntry(BaseModel):
+    origin_index: int = Field(ge=0)
+    destination_index: int = Field(ge=0)
+    distance_meters: int | None = Field(default=None, ge=0)
+    duration_minutes: int | None = Field(default=None, ge=0)
+    route_exists: bool = True
+    provider: str = "demo"
+
+
+class DataSourceStatus(BaseModel):
+    model: str = "demo"
+    flights: str = "demo"
+    hotels: str = "demo"
+    places: str = "demo"
+    routes: str = "demo"
+    weather: str = "unavailable"
+
+
 class ItineraryItem(BaseModel):
     id: str
     title: str
@@ -159,6 +188,8 @@ class PlaceRecommendation(BaseModel):
     visit_duration_minutes: int = Field(gt=0)
     travel_to_next_minutes: int = Field(ge=0)
     safety_buffer_minutes: int = Field(ge=0)
+    total_required_minutes: int = Field(default=0, ge=0)
+    remaining_buffer_minutes: int = Field(default=0, ge=0)
     score: float = Field(ge=0, le=1)
     reason: list[str]
     feasible: bool
@@ -183,6 +214,7 @@ class TripPlan(BaseModel):
     places: list[PlaceCandidate]
     itinerary: list[ItineraryItem]
     budget: BudgetBreakdown
+    sources: DataSourceStatus = Field(default_factory=DataSourceStatus)
     warnings: list[str] = Field(default_factory=list)
 
 
