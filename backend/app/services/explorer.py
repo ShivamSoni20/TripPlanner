@@ -5,14 +5,19 @@ from app.models.domain import (
     PlaceRecommendation,
     TimeWindow,
 )
-from app.providers.contracts import PlacesProvider, RoutesProvider
+from app.providers.contracts import PlacesProvider, RoutesProvider, WeatherProvider
+from app.providers.demo import DemoWeatherProvider
 from app.services.free_time import get_category_visit_duration, recommend_place
+from app.services.weather import evaluate_activity_weather
 
 
 class ExplorerService:
-    def __init__(self, places: PlacesProvider, routes: RoutesProvider) -> None:
+    def __init__(
+        self, places: PlacesProvider, routes: RoutesProvider, weather: WeatherProvider | None = None
+    ) -> None:
         self.places = places
         self.routes = routes
+        self.weather = weather or DemoWeatherProvider()
 
     async def explore(
         self,
@@ -29,6 +34,9 @@ class ExplorerService:
             interests=interests or ["tourist attractions"],
             radius_meters=10000,
             max_results=12,
+        )
+        forecast = await self.weather.get_forecast(
+            location=window.origin, start_date=window.start_at.date(), end_date=window.end_at.date()
         )
 
         filtered = [
@@ -63,7 +71,7 @@ class ExplorerService:
                 if entry.route_exists and entry.duration_minutes is not None:
                     travel_next_map[entry.origin_index] = entry.duration_minutes
 
-        evaluated: list[tuple[PlaceCandidate, int, int, int, float, list[str]]] = []
+        evaluated: list[tuple[PlaceCandidate, int, int, int, float, list[str], object]] = []
 
         for idx, candidate in enumerate(filtered):
             travel_to = travel_to_map.get(idx)
@@ -79,6 +87,7 @@ class ExplorerService:
             # Check budget fit if specified
             if remaining_budget is not None and candidate.price.amount > remaining_budget:
                 continue
+            assessment = evaluate_activity_weather(candidate, window.start_at, forecast)
 
             # Calculate score
             pref_match = (
@@ -89,7 +98,17 @@ class ExplorerService:
             efficiency_score = max(0.0, 0.30 * (1.0 - time_ratio))
             open_bonus = 0.10 if (candidate.open_now is True or candidate.opening_hours) else 0.05
 
-            score = min(1.0, round(pref_match + rating_score + efficiency_score + open_bonus, 2))
+            score = min(
+                1.0,
+                round(
+                    pref_match
+                    + rating_score
+                    + efficiency_score
+                    + open_bonus
+                    + assessment.score * 0.1,
+                    2,
+                ),
+            )
 
             reasons: list[str] = []
             if candidate.rating and candidate.rating >= 4.5:
@@ -97,8 +116,9 @@ class ExplorerService:
             if any(i.lower() in candidate.interest_tags for i in interests):
                 reasons.append("Matches your trip interests")
             reasons.append(f"{travel_to} min travel time")
+            reasons.extend(assessment.reason)
 
-            evaluated.append((candidate, travel_to, visit, travel_next, score, reasons))
+            evaluated.append((candidate, travel_to, visit, travel_next, score, reasons, assessment))
 
         if not evaluated:
             return []
@@ -118,7 +138,7 @@ class ExplorerService:
                 safety_buffer_minutes=safety_buffer_minutes,
                 score=best_fit[4],
                 reason=best_fit[5],
-            )
+            ).model_copy(update={"weather": best_fit[6]})
         )
 
         if len(evaluated) > 1:
@@ -133,7 +153,7 @@ class ExplorerService:
                     safety_buffer_minutes=safety_buffer_minutes,
                     score=alt[4],
                     reason=alt[5],
-                )
+                ).model_copy(update={"weather": alt[6]})
             )
 
         # Quick Option: candidate with lowest total travel time (travel_to + travel_next)
@@ -151,7 +171,7 @@ class ExplorerService:
                     safety_buffer_minutes=safety_buffer_minutes,
                     score=quick_candidate[4],
                     reason=quick_reasons,
-                )
+                ).model_copy(update={"weather": quick_candidate[6]})
             )
 
         return recommendations

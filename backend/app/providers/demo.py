@@ -1,7 +1,8 @@
 import math
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 
 from app.models.domain import (
+    DailyWeather,
     FlightOption,
     GeoPoint,
     HotelOption,
@@ -10,6 +11,8 @@ from app.models.domain import (
     RouteEstimate,
     RouteMatrixEntry,
     TripConstraints,
+    WeatherAvailability,
+    WeatherForecast,
 )
 
 
@@ -217,3 +220,31 @@ class DemoRoutesProvider:
                     )
                 )
         return results
+
+
+class DemoWeatherProvider:
+    async def get_forecast(
+        self, *, location: GeoPoint, start_date: date, end_date: date
+    ) -> WeatherForecast:
+        days = []
+        conditions = [("Sunny", 1000, 10), ("Afternoon rain", 1183, 70), ("Clear", 1000, 5)]
+        for offset in range(max(0, (end_date - start_date).days + 1)):
+            condition, code, rain = conditions[offset % len(conditions)]
+            days.append(
+                DailyWeather(
+                    date=start_date.fromordinal(start_date.toordinal() + offset),
+                    min_temperature_c=24,
+                    max_temperature_c=30,
+                    condition_text=condition,
+                    condition_code=code,
+                    chance_of_rain=rain,
+                    total_precipitation_mm=2.0 if rain else 0,
+                    max_wind_kph=18,
+                )
+            )
+        return WeatherForecast(
+            availability=WeatherAvailability.AVAILABLE,
+            location=location,
+            provider="demo",
+            days=days,
+        )

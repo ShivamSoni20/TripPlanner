@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     travel_data_mode: Literal["demo", "live"] = "demo"
     places_provider: Literal["demo", "google"] = "demo"
     routes_provider: Literal["demo", "google"] = "demo"
+    weather_provider: Literal["demo", "weatherapi"] = "demo"
     routes_travel_mode: str = "DRIVE"
     routes_routing_preference: str = "TRAFFIC_UNAWARE"
     allowed_origins: str = "http://localhost:8080,http://localhost:3000"

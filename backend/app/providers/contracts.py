@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from app.models.domain import (
@@ -9,6 +9,7 @@ from app.models.domain import (
     RouteEstimate,
     RouteMatrixEntry,
     TripConstraints,
+    WeatherForecast,
 )
 
 
@@ -51,3 +52,9 @@ class RoutesProvider(Protocol):
         *,
         departure_at: datetime | None = None,
     ) -> list[RouteMatrixEntry]: ...
+
+
+class WeatherProvider(Protocol):
+    async def get_forecast(
+        self, *, location: GeoPoint, start_date: date, end_date: date
+    ) -> WeatherForecast: ...

@@ -155,6 +155,66 @@ class DataSourceStatus(BaseModel):
     weather: str = "unavailable"
 
 
+class WeatherAvailability(StrEnum):
+    AVAILABLE = "available"
+    NOT_AVAILABLE_YET = "not_available_yet"
+    UNAVAILABLE = "unavailable"
+
+
+class HourlyWeather(BaseModel):
+    timestamp: datetime
+    temperature_c: float | None = None
+    feels_like_c: float | None = None
+    condition_text: str
+    condition_code: int | None = None
+    chance_of_rain: int | None = Field(default=None, ge=0, le=100)
+    precipitation_mm: float | None = Field(default=None, ge=0)
+    wind_kph: float | None = Field(default=None, ge=0)
+
+
+class DailyWeather(BaseModel):
+    date: date
+    min_temperature_c: float | None = None
+    max_temperature_c: float | None = None
+    condition_text: str
+    condition_code: int | None = None
+    chance_of_rain: int | None = Field(default=None, ge=0, le=100)
+    total_precipitation_mm: float | None = Field(default=None, ge=0)
+    max_wind_kph: float | None = Field(default=None, ge=0)
+    hours: list[HourlyWeather] = Field(default_factory=list)
+
+
+class WeatherAlert(BaseModel):
+    headline: str
+    severity: str | None = None
+    areas: str | None = None
+    effective_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class WeatherForecast(BaseModel):
+    availability: WeatherAvailability
+    location: GeoPoint
+    timezone: str | None = None
+    days: list[DailyWeather] = Field(default_factory=list)
+    alerts: list[WeatherAlert] = Field(default_factory=list)
+    provider: str
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WeatherFit(StrEnum):
+    GOOD = "good"
+    CAUTION = "caution"
+    UNSUITABLE = "unsuitable"
+    UNKNOWN = "unknown"
+
+
+class WeatherAssessment(BaseModel):
+    fit: WeatherFit
+    score: float = Field(ge=0, le=1)
+    reason: list[str] = Field(default_factory=list)
+
+
 class ItineraryItem(BaseModel):
     id: str
     title: str
@@ -193,6 +253,9 @@ class PlaceRecommendation(BaseModel):
     score: float = Field(ge=0, le=1)
     reason: list[str]
     feasible: bool
+    weather: WeatherAssessment = Field(
+        default_factory=lambda: WeatherAssessment(fit=WeatherFit.UNKNOWN, score=0.5)
+    )
 
 
 class BudgetBreakdown(BaseModel):
@@ -215,6 +278,8 @@ class TripPlan(BaseModel):
     itinerary: list[ItineraryItem]
     budget: BudgetBreakdown
     sources: DataSourceStatus = Field(default_factory=DataSourceStatus)
+    weather: WeatherForecast | None = None
+    free_time_windows: list[TimeWindow] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 

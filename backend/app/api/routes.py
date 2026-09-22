@@ -16,6 +16,7 @@ from app.providers.demo import (
     DemoHotelProvider,
     DemoPlacesProvider,
     DemoRoutesProvider,
+    DemoWeatherProvider,
 )
 from app.providers.errors import ProviderErrorCategory, ProviderException
 from app.providers.google import (
@@ -24,6 +25,7 @@ from app.providers.google import (
     GoogleRoutesClient,
     GoogleRoutesProvider,
 )
+from app.providers.weatherapi import WeatherApiClient, WeatherApiProvider
 from app.services.explorer import ExplorerService
 from app.services.planner import TripPlanner
 from app.services.trip_extraction import DemoTripExtractor, ModelTripExtractor, TripExtractor
@@ -36,6 +38,27 @@ class ExploreRequest(BaseModel):
     window: TimeWindow
     excluded_place_ids: list[str] = Field(default_factory=list)
     remaining_budget: int | None = None
+
+
+def get_weather_provider():
+    settings = get_settings()
+    if settings.weather_provider == "weatherapi":
+        if not settings.weather_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": "WEATHER_API_KEY is required when WEATHER_PROVIDER=weatherapi",
+                },
+            )
+        return WeatherApiProvider(
+            WeatherApiClient(
+                api_key=settings.weather_api_key,
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+            )
+        )
+    return DemoWeatherProvider()
 
 
 def get_planner() -> TripPlanner:
@@ -140,7 +163,7 @@ async def health_check():
             "routes": settings.routes_provider,
             "flights": "demo",
             "hotels": "demo",
-            "weather": "unavailable",
+            "weather": settings.weather_provider,
         },
     }
 
@@ -193,7 +216,7 @@ async def plan_trip(request: PlanningRequest):
 @router.post("/trips/explore", response_model=list[PlaceRecommendation])
 async def explore_places(request: ExploreRequest):
     planner = get_planner()
-    explorer = ExplorerService(planner.places, planner.routes)
+    explorer = ExplorerService(planner.places, planner.routes, get_weather_provider())
     try:
         return await explorer.explore(
             window=request.window,
