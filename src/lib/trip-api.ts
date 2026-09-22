@@ -19,6 +19,8 @@ export interface TripPlanResponse {
   budget: BudgetBreakdown;
   sources?: DataSourceStatus;
   warnings: string[];
+  free_time_windows?: Array<{ start_at: string; end_at: string; origin: PlaceCandidate["location"]; next_destination?: PlaceCandidate["location"]; duration_minutes: number }>;
+  freeTimeWindows?: import("@/domain/trip").TimeWindow[];
 }
 
 export interface NeedsInputResponse {
@@ -113,6 +115,7 @@ function normalizePlan(plan: ApiTripPlanResponse): TripPlanResponse {
     },
     sources: plan.sources,
     warnings: plan.warnings || [],
+    freeTimeWindows: (plan.free_time_windows ?? []).map((window) => ({ startAt: window.start_at, endAt: window.end_at, origin: window.origin, ...(window.next_destination ? { nextDestination: window.next_destination } : {}), durationMinutes: window.duration_minutes })),
   };
 }
 const API_URL = import.meta.env["VITE_TRIPPILOT_API_URL"] ?? "http://localhost:8000";
@@ -184,5 +187,15 @@ export async function exploreNearbyPlaces(
   if (!Array.isArray(payload)) {
     return [];
   }
-  return payload as PlaceRecommendation[];
+  return payload.map((item) => {
+    const raw = item as Record<string, unknown>;
+    const place = raw["place"] as Record<string, unknown>;
+    return {
+      rank: String(raw["rank"]),
+      place: {
+        placeId: String(place["place_id"]), provider: String(place["provider"]), name: String(place["name"]), category: String(place["category"]), types: Array.isArray(place["types"]) ? place["types"].filter((v): v is string => typeof v === "string") : [], location: place["location"] as PlaceCandidate["location"], rating: typeof place["rating"] === "number" ? place["rating"] : undefined, price: place["price"] as PlaceCandidate["price"], mapsUrl: typeof place["maps_url"] === "string" ? place["maps_url"] : undefined, suggestedVisitMinutes: Number(place["suggested_visit_minutes"] ?? 60), weatherSuitability: Number(place["weather_suitability"] ?? 1), interestTags: Array.isArray(place["interest_tags"]) ? place["interest_tags"].filter((v): v is string => typeof v === "string") : [],
+      },
+      travelToMinutes: Number(raw["travel_to_minutes"]), visitDurationMinutes: Number(raw["visit_duration_minutes"]), travelToNextMinutes: Number(raw["travel_to_next_minutes"]), safetyBufferMinutes: Number(raw["safety_buffer_minutes"]), totalRequiredMinutes: Number(raw["total_required_minutes"]), remainingBufferMinutes: Number(raw["remaining_buffer_minutes"]), score: Number(raw["score"]), reason: Array.isArray(raw["reason"]) ? raw["reason"].filter((v): v is string => typeof v === "string") : [], feasible: raw["feasible"] === true,
+    };
+  });
 }

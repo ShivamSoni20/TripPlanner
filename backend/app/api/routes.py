@@ -122,11 +122,14 @@ def get_planner() -> TripPlanner:
         weather="unavailable",
     )
 
+    weather = get_weather_provider()
+    sources.weather = settings.weather_provider
     return TripPlanner(
         DemoFlightProvider(),
         DemoHotelProvider(),
         places,
         routes,
+        weather,
         data_mode=data_mode,
         sources=sources,
     )

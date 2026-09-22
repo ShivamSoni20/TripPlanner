@@ -12,9 +12,17 @@ from app.models.domain import (
     TripPlan,
     TripStatus,
 )
-from app.providers.contracts import FlightProvider, HotelProvider, PlacesProvider, RoutesProvider
+from app.providers.contracts import (
+    FlightProvider,
+    HotelProvider,
+    PlacesProvider,
+    RoutesProvider,
+    WeatherProvider,
+)
+from app.providers.demo import DemoWeatherProvider
 from app.providers.errors import ProviderException
 from app.services.budget import calculate_budget
+from app.services.free_time import detect_free_windows
 from app.services.schedule import validate_schedule
 
 
@@ -25,6 +33,7 @@ class TripPlanner:
         hotels: HotelProvider,
         places: PlacesProvider,
         routes: RoutesProvider,
+        weather: WeatherProvider | None = None,
         *,
         data_mode: str = "demo",
         sources: DataSourceStatus | None = None,
@@ -33,6 +42,7 @@ class TripPlanner:
         self.hotels = hotels
         self.places = places
         self.routes = routes
+        self.weather = weather or DemoWeatherProvider()
         self.data_mode = data_mode
         self.sources = sources or DataSourceStatus()
 
@@ -44,6 +54,17 @@ class TripPlanner:
         )
 
         itinerary = await self._build_route_aware_itinerary(constraints, places)
+        weather = None
+        warnings: list[str] = []
+        if places:
+            try:
+                weather = await self.weather.get_forecast(
+                    location=places[0].location,
+                    start_date=constraints.start_date,
+                    end_date=constraints.end_date,
+                )
+            except ProviderException:
+                warnings.append("Weather could not be checked.")
         schedule_errors = validate_schedule(itinerary)
         if schedule_errors:
             raise ValueError("; ".join(schedule_errors))
@@ -65,7 +86,8 @@ class TripPlanner:
             updated_at=now,
             data_mode=self.data_mode,
         )
-        warnings = [] if budget.within_budget else ["Plan exceeds the requested budget"]
+        if not budget.within_budget:
+            warnings.append("Plan exceeds the requested budget")
         return TripPlan(
             trip=trip,
             flights=flight_options,
@@ -74,6 +96,8 @@ class TripPlanner:
             itinerary=itinerary,
             budget=budget,
             sources=self.sources,
+            weather=weather,
+            free_time_windows=detect_free_windows(itinerary),
             warnings=warnings,
         )
 

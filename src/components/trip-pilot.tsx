@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
@@ -35,7 +36,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import { createTripPlan, type TripPlanResponse } from "@/lib/trip-api";
+import { createTripPlan, exploreNearbyPlaces, type TripPlanResponse } from "@/lib/trip-api";
+import type { PlaceRecommendation } from "@/domain/trip";
 import goaHero from "@/assets/goa-hero.jpg";
 import fortImage from "@/assets/fort-aguada.jpg";
 import beachImage from "@/assets/goa-beach.jpg";
@@ -56,8 +58,8 @@ type TripContextValue = {
   setView: (value: TripView) => void;
   selectedStop: number;
   setSelectedStop: (value: number) => void;
-  addedFort: boolean;
-  addFort: () => void;
+  addedRecommendations: PlaceRecommendation[];
+  addRecommendation: (value: PlaceRecommendation) => void;
   delayOpen: boolean;
   setDelayOpen: (value: boolean) => void;
   replanned: boolean;
@@ -70,7 +72,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<AppStage>("prompt");
   const [view, setView] = useState<TripView>("overview");
   const [selectedStop, setSelectedStop] = useState(2);
-  const [addedFort, setAddedFort] = useState(false);
+  const [addedRecommendations, setAddedRecommendations] = useState<PlaceRecommendation[]>([]);
   const [delayOpen, setDelayOpen] = useState(false);
   const [replanned, setReplanned] = useState(false);
   const [plan, setPlan] = useState<TripPlanResponse | null>(null);
@@ -106,8 +108,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setView,
       selectedStop,
       setSelectedStop,
-      addedFort,
-      addFort: () => setAddedFort(true),
+      addedRecommendations,
+      addRecommendation: (value) => setAddedRecommendations((current) => [...current, value]),
       delayOpen,
       setDelayOpen,
       replanned,
@@ -124,7 +126,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
       followUpQuestion,
       view,
       selectedStop,
-      addedFort,
+      addedRecommendations,
       delayOpen,
       replanned,
     ],
@@ -662,7 +664,7 @@ const stops = [
 
 function RouteThread() {
   const trip = useTrip();
-  const shown = trip.addedFort ? stops : stops.filter((stop) => stop.id !== 2);
+  const shown = trip.addedRecommendations.length ? stops : stops.filter((stop) => stop.id !== 2);
   return (
     <div className="relative space-y-2 pl-9 before:absolute before:bottom-12 before:left-[13px] before:top-10 before:w-px before:bg-border">
       {shown.map((stop, index) => (
@@ -707,7 +709,7 @@ function RouteThread() {
               {stop.id === 1 ? "12 min drive" : "28 min drive"}
             </div>
           )}
-          {!trip.addedFort && stop.id === 1 && <FreeTimeCard />}
+          {!trip.addedRecommendations.length && stop.id === 1 && <FreeTimeCard />}
         </div>
       ))}
     </div>
@@ -744,7 +746,7 @@ function Itinerary() {
         eyebrow="Day 2 of 5"
         title={trip.replanned ? "North Goa · revised" : "North Goa"}
         copy={
-          trip.addedFort
+          trip.addedRecommendations.length
             ? "Fort Aguada fits naturally before dinner, with a 50-minute safety buffer."
             : "A relaxed morning, an open afternoon, and dinner across the Mandovi."
         }
@@ -804,11 +806,18 @@ function SmartExplorer() {
   const trip = useTrip();
   const [filter, setFilter] = useState("Best Fit");
   const [selected, setSelected] = useState(0);
+  const window = trip.plan?.freeTimeWindows?.[0];
+  const explorer = useQuery({
+    queryKey: ["trip-explorer", trip.plan?.trip.id, window?.startAt, window?.endAt, trip.addedRecommendations.map((item) => item.place.placeId)],
+    queryFn: () => exploreNearbyPlaces({ interests: trip.plan?.trip.constraints.preferences.interests ?? [], window: window!, excludedPlaceIds: trip.addedRecommendations.map((item) => item.place.placeId), remainingBudget: trip.plan?.budget.remaining }),
+    enabled: Boolean(trip.plan && window),
+  });
+  const liveRecommendations = explorer.data ?? [];
   return (
     <>
       <SectionHeading
         eyebrow="Smart free-time explorer"
-        title={trip.addedFort ? "Fort Aguada fits beautifully" : "You have 2h 45m free"}
+        title={trip.addedRecommendations.length ? "A nearby stop fits beautifully" : "You have 2h 45m free"}
         copy="You’re in Candolim. Dinner is at 7:30 PM in Panjim. Let’s make the most of it."
         action={
           <span className="rounded-full bg-butter px-4 py-2 text-sm font-bold">
@@ -833,10 +842,10 @@ function SmartExplorer() {
       </div>
       <div className="grid gap-6 xl:grid-cols-[1.08fr_.92fr]">
         <div className="flex snap-x gap-4 overflow-x-auto pb-4 xl:grid xl:grid-cols-1">
-          {recommendations.map((item, index) => (
+          {liveRecommendations.map((item, index) => (
             <motion.article
               layout
-              key={item.name}
+              key={item.place.placeId}
               aria-current={selected === index ? "true" : undefined}
               className={cn(
                 "min-w-[86vw] snap-center overflow-hidden rounded-[28px] border bg-card sm:min-w-[520px] xl:min-w-0",
@@ -845,12 +854,12 @@ function SmartExplorer() {
             >
               <div className="grid sm:grid-cols-[210px_1fr]">
                 <img
-                  src={item.image}
+                  src={fortImage}
                   loading="lazy"
                   width={1200}
                   height={900}
                   className="h-52 w-full object-cover sm:h-full"
-                  alt={item.name}
+                  alt={item.place.name}
                 />
                 <div className="p-5">
                   <div className="flex items-center justify-between">
@@ -864,31 +873,31 @@ function SmartExplorer() {
                     </span>
                     <span className="flex items-center gap-1 text-sm font-bold">
                       <Star className="size-4 fill-current text-primary" />
-                      {item.rating}
+                      {item.place.rating ?? "—"}
                     </span>
                   </div>
-                  <h3 className="mt-4 text-xl font-bold">{item.name}</h3>
-                  <p className="text-sm text-muted-foreground">{item.category}</p>
+                  <h3 className="mt-4 text-xl font-bold">{item.place.name}</h3>
+                  <p className="text-sm text-muted-foreground">{item.place.category}</p>
                   <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
                     <span>
                       <Navigation className="mr-1 inline size-3.5" />
-                      {item.from}
+                      {item.travelToMinutes} min away
                     </span>
                     <span>
                       <Clock3 className="mr-1 inline size-3.5" />
-                      {item.visit}
+                      {item.visitDurationMinutes} min visit
                     </span>
-                    <span>{item.next}</span>
-                    <span>{item.cost} estimated</span>
+                    <span>{item.travelToNextMinutes} min to next</span>
+                    <span>₹{item.place.price.amount} estimated</span>
                   </div>
                   <p className="mt-3 font-semibold text-foreground">
                     <Check className="mr-1 inline size-4 text-primary" />
-                    {item.buffer}
+                    {item.remainingBufferMinutes} min buffer
                   </p>
                   <div className="mt-4 rounded-2xl bg-lavender/35 p-3 text-sm">
                     <p className="font-bold">Why this works</p>
                     <p className="mt-1 text-muted-foreground">
-                      Matches your interests · currently open · good weather · low route detour
+                      {item.reason.join(" · ")}
                     </p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
@@ -901,25 +910,25 @@ function SmartExplorer() {
                       <MapPin /> Preview route
                     </Button>
                     <Button
-                      disabled={trip.addedFort && index === 0}
+                      disabled={trip.addedRecommendations.some((added) => added.place.placeId === item.place.placeId)}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (index === 0) trip.addFort();
+                        trip.addRecommendation(item);
                       }}
                       className="rounded-full"
                     >
                       <Plus />
-                      {trip.addedFort && index === 0 ? "Added to today" : "Add to today"}
+                      {trip.addedRecommendations.some((added) => added.place.placeId === item.place.placeId) ? "Added to today" : "Add to today"}
                     </Button>
-                    <Button asChild variant="outline" className="rounded-full">
+                    {item.place.mapsUrl && <Button asChild variant="outline" className="rounded-full">
                       <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name)}`}
+                        href={item.place.mapsUrl}
                         target="_blank"
                         rel="noreferrer"
                       >
                         Open in Maps <ExternalLink />
                       </a>
-                    </Button>
+                    </Button>}
                   </div>
                 </div>
               </div>
