@@ -66,8 +66,10 @@ class ExplorerService:
         evaluated: list[tuple[PlaceCandidate, int, int, int, float, list[str]]] = []
 
         for idx, candidate in enumerate(filtered):
-            travel_to = travel_to_map.get(idx, 15)  # Fallback 15 min if unmapped
-            travel_next = travel_next_map.get(idx, 0 if not window.next_destination else 15)
+            travel_to = travel_to_map.get(idx)
+            travel_next = 0 if not window.next_destination else travel_next_map.get(idx)
+            if travel_to is None or travel_next is None:
+                continue
             visit = get_category_visit_duration(candidate)
 
             total_required = travel_to + visit + travel_next + safety_buffer_minutes

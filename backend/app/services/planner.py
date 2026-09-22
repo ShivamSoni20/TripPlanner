@@ -13,6 +13,7 @@ from app.models.domain import (
     TripStatus,
 )
 from app.providers.contracts import FlightProvider, HotelProvider, PlacesProvider, RoutesProvider
+from app.providers.errors import ProviderException
 from app.services.budget import calculate_budget
 from app.services.schedule import validate_schedule
 
@@ -109,9 +110,10 @@ class TripPlanner:
                 if prev_location is not None:
                     try:
                         estimate = await self.routes.compute_route(prev_location, place.location)
-                        travel_min = estimate.duration_minutes
-                    except Exception:
-                        travel_min = 15
+                    except ProviderException:
+                        # A route-dependent transition cannot be proven feasible without a route.
+                        continue
+                    travel_min = estimate.duration_minutes
 
                 start_at = current_time + timedelta(minutes=travel_min)
                 visit_min = place.suggested_visit_minutes or 60

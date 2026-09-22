@@ -19,8 +19,10 @@ def test_duration_parsing_ceil_conservatively() -> None:
     assert parse_duration("60s") == 1
     assert parse_duration("0.5s") == 1
     assert parse_duration("3600s") == 60
-    assert parse_duration(None) == 0
-    assert parse_duration("invalid") == 0
+    with pytest.raises(ValueError):
+        parse_duration(None)
+    with pytest.raises(ValueError):
+        parse_duration("not-a-duration")
 
 
 @pytest.mark.asyncio

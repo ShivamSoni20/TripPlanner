@@ -14,13 +14,15 @@ MATRIX_FIELD_MASK = "originIndex,destinationIndex,status,condition,distanceMeter
 
 def parse_duration(duration_str: str | None) -> int:
     if not duration_str or not isinstance(duration_str, str):
-        return 0
+        raise ValueError("Google Routes duration is missing")
     cleaned = duration_str.rstrip("s").strip()
     try:
         seconds = float(cleaned)
-        return max(0, math.ceil(seconds / 60.0))
+        if seconds < 0:
+            raise ValueError("Google Routes duration cannot be negative")
+        return math.ceil(seconds / 60.0)
     except ValueError:
-        return 0
+        raise ValueError(f"Google Routes duration is invalid: {duration_str!r}") from None
 
 
 class GoogleRoutesClient:
@@ -188,7 +190,14 @@ class GoogleRoutesProvider:
                 retryable=False,
             )
         first = routes[0]
-        duration_minutes = parse_duration(first.get("duration"))
+        try:
+            duration_minutes = parse_duration(first.get("duration"))
+        except ValueError as error:
+            raise ProviderException(
+                ProviderErrorCategory.INVALID_RESPONSE,
+                "Google Routes returned an invalid route duration",
+                retryable=False,
+            ) from error
         distance_meters = int(first.get("distanceMeters", 0))
         polyline = None
         polyline_data = first.get("polyline")
@@ -237,7 +246,20 @@ class GoogleRoutesProvider:
 
             if is_ok:
                 dist = int(elem.get("distanceMeters", 0)) if "distanceMeters" in elem else None
-                dur = parse_duration(elem.get("duration")) if "duration" in elem else None
+                try:
+                    dur = parse_duration(elem.get("duration")) if "duration" in elem else None
+                except ValueError:
+                    results.append(
+                        RouteMatrixEntry(
+                            origin_index=origin_idx,
+                            destination_index=dest_idx,
+                            distance_meters=None,
+                            duration_minutes=None,
+                            route_exists=False,
+                            provider="google",
+                        )
+                    )
+                    continue
                 results.append(
                     RouteMatrixEntry(
                         origin_index=origin_idx,

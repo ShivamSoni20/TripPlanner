@@ -117,6 +117,10 @@ function normalizePlan(plan: ApiTripPlanResponse): TripPlanResponse {
 }
 const API_URL = import.meta.env["VITE_TRIPPILOT_API_URL"] ?? "http://localhost:8000";
 
+function apiUrl(path: string): string {
+  return `${API_URL.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+}
+
 export async function createTripPlan(
   prompt: string,
   signal?: AbortSignal,
@@ -127,7 +131,7 @@ export async function createTripPlan(
     body: JSON.stringify({ prompt }),
     ...(signal ? { signal } : {}),
   };
-  const response = await fetch(`/api/v1/trips/plan`, requestInit);
+  const response = await fetch(apiUrl("/api/v1/trips/plan"), requestInit);
   if (!response.ok) {
     throw new Error(`Trip planning failed (${response.status})`);
   }
@@ -172,7 +176,7 @@ export async function exploreNearbyPlaces(
     }),
     ...(signal ? { signal } : {}),
   };
-  const response = await fetch(`/api/v1/trips/explore`, requestInit);
+  const response = await fetch(apiUrl("/api/v1/trips/explore"), requestInit);
   if (!response.ok) {
     throw new Error(`Explore request failed (${response.status})`);
   }
