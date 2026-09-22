@@ -1,5 +1,7 @@
 import asyncio
 
+from datetime import timedelta
+
 from app.models.domain import (
     PlaceCandidate,
     PlaceRecommendation,
@@ -7,7 +9,7 @@ from app.models.domain import (
 )
 from app.providers.contracts import PlacesProvider, RoutesProvider, WeatherProvider
 from app.providers.demo import DemoWeatherProvider
-from app.services.free_time import get_category_visit_duration, recommend_place
+from app.services.free_time import get_category_visit_duration, is_open_for_visit, recommend_place
 from app.services.weather import evaluate_activity_weather
 
 
@@ -88,6 +90,12 @@ class ExplorerService:
             if remaining_budget is not None and candidate.price.amount > remaining_budget:
                 continue
             assessment = evaluate_activity_weather(candidate, window.start_at, forecast)
+            if assessment.fit.value == "unsuitable":
+                continue
+            visit_start = window.start_at + timedelta(minutes=travel_to)
+            open_for_visit = is_open_for_visit(candidate, visit_start, visit)
+            if open_for_visit is False:
+                continue
 
             # Calculate score
             pref_match = (
@@ -96,7 +104,7 @@ class ExplorerService:
             rating_score = ((candidate.rating or 4.0) / 5.0) * 0.25
             time_ratio = (travel_to + travel_next) / float(window.duration_minutes)
             efficiency_score = max(0.0, 0.30 * (1.0 - time_ratio))
-            open_bonus = 0.10 if (candidate.open_now is True or candidate.opening_hours) else 0.05
+            open_bonus = 0.10 if open_for_visit is True else 0.05
 
             score = min(
                 1.0,
@@ -116,6 +124,10 @@ class ExplorerService:
             if any(i.lower() in candidate.interest_tags for i in interests):
                 reasons.append("Matches your trip interests")
             reasons.append(f"{travel_to} min travel time")
+            if open_for_visit is True:
+                reasons.append("Open for your visit window")
+            elif open_for_visit is None:
+                reasons.append("Opening hours unavailable")
             reasons.extend(assessment.reason)
 
             evaluated.append((candidate, travel_to, visit, travel_next, score, reasons, assessment))

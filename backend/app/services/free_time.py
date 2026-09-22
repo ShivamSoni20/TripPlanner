@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from app.models.domain import ItineraryItem, PlaceCandidate, PlaceRecommendation, TimeWindow
 
 
@@ -89,3 +91,26 @@ def get_category_visit_duration(place: PlaceCandidate) -> int:
     if "bar" in category or "bar" in types or "night_club" in types:
         return 90
     return place.suggested_visit_minutes or 60
+
+
+def is_open_for_visit(place: PlaceCandidate, start_at: datetime, duration_minutes: int) -> bool | None:
+    """Return whether a known schedule covers the whole proposed visit; None means unknown."""
+    hours = place.opening_hours
+    if not hours or not hours.periods:
+        return None
+    end_at = start_at + timedelta(minutes=duration_minutes)
+    # Google uses Sunday=0 while Python's weekday uses Monday=0.
+    for period in hours.periods:
+        open_day = (period.open_day - 1) % 7
+        if start_at.weekday() != open_day:
+            continue
+        open_at = start_at.replace(hour=period.open_hour, minute=period.open_minute, second=0)
+        close_day = (period.close_day - 1) % 7 if period.close_day is not None else open_day
+        day_delta = (close_day - open_day) % 7
+        close_at = open_at.replace(hour=period.close_hour or 0, minute=period.close_minute or 0)
+        close_at += timedelta(days=day_delta)
+        if period.close_hour is None or period.close_minute is None:
+            continue
+        if open_at <= start_at and end_at <= close_at:
+            return True
+    return False

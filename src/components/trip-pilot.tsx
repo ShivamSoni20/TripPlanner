@@ -471,6 +471,11 @@ function TripHero() {
   const { plan, setView } = useTrip();
   const destination = plan?.trip.constraints.destination ?? "Goa";
   const travelers = plan?.trip.constraints.travelers ?? 2;
+  const start = plan?.trip.constraints.startDate;
+  const end = plan?.trip.constraints.endDate;
+  const weather = plan?.weather?.days[0];
+  const sources = plan?.sources;
+  const liveSources = sources && Object.values(sources).some((source) => source !== "demo" && source !== "unavailable");
   return (
     <section className="relative min-h-[390px] overflow-hidden rounded-[28px] text-primary-foreground">
       <img
@@ -484,13 +489,13 @@ function TripHero() {
       <div className="relative flex min-h-[390px] max-w-2xl flex-col justify-end p-6 md:p-10">
         <div className="mb-auto flex w-fit items-center gap-2 rounded-full bg-background/90 px-3 py-2 text-sm font-semibold text-foreground">
           <span className="size-2 rounded-full bg-aqua" /> Trip ready ·{" "}
-          {plan?.trip.dataMode === "live" ? "Live data" : "Demo data"}
+          {liveSources ? "Provider data" : "Demo data"}
         </div>
-        <p className="text-sm font-bold uppercase">India · 12–17 November</p>
+        <p className="text-sm font-bold uppercase">{start && end ? `${start} – ${end}` : "Your travel dates"}</p>
         <h1 className="mt-2 text-6xl font-bold uppercase md:text-8xl">{destination}</h1>
         <div className="mt-5 flex flex-wrap gap-3 text-sm font-semibold">
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
-            <CalendarDays className="mr-2 inline size-4" />5 days
+            <CalendarDays className="mr-2 inline size-4" />{start && end ? `${Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000))} days` : "Trip"}
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <Users className="mr-2 inline size-4" />
@@ -498,7 +503,7 @@ function TripHero() {
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <CloudSun className="mr-2 inline size-4" />
-            29° · Sunny
+            {weather?.maxTemperatureC != null ? `${Math.round(weather.maxTemperatureC)}° · ${weather.conditionText}` : "Weather pending"}
           </span>
         </div>
         <Button
@@ -717,7 +722,11 @@ function RouteThread() {
 }
 
 function FreeTimeCard() {
-  const { setView } = useTrip();
+  const { setView, plan } = useTrip();
+  const window = plan?.freeTimeWindows?.[0];
+  if (!window) return null;
+  const start = new Date(window.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const end = new Date(window.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
     <button
       onClick={() => setView("explore")}
@@ -726,10 +735,10 @@ function FreeTimeCard() {
       <span className="absolute -left-[34px] top-6 z-10 flex size-7 items-center justify-center rounded-full border-4 border-background bg-butter">
         <Sparkles className="size-3 text-primary" />
       </span>
-      <p className="text-sm font-bold text-primary">13:15–16:00</p>
-      <p className="mt-1 text-xl font-bold">2h 45m free</p>
+      <p className="text-sm font-bold text-primary">{start}–{end}</p>
+      <p className="mt-1 text-xl font-bold">{Math.floor(window.durationMinutes / 60)}h {window.durationMinutes % 60}m free</p>
       <p className="mt-1 text-sm text-muted-foreground">
-        TripPilot found 3 places that fit this window.
+        Check route-aware activities that can safely fit this window.
       </p>
       <span className="mt-4 inline-flex items-center gap-2 text-sm font-bold">
         Explore nearby <ArrowRight className="size-4" />
@@ -763,45 +772,6 @@ function Itinerary() {
   );
 }
 
-const recommendations = [
-  {
-    rank: "BEST FIT",
-    name: "Fort Aguada",
-    category: "Historical landmark",
-    rating: "4.5",
-    from: "12 min away",
-    visit: "1h 15m visit",
-    next: "28 min → dinner",
-    buffer: "Leaves 50 min buffer",
-    cost: "₹100",
-    image: fortImage,
-  },
-  {
-    rank: "ALTERNATIVE",
-    name: "Sinquerim Beach",
-    category: "Beach",
-    rating: "4.7",
-    from: "15 min away",
-    visit: "1h visit",
-    next: "31 min → dinner",
-    buffer: "Leaves 42 min buffer",
-    cost: "Free",
-    image: beachImage,
-  },
-  {
-    rank: "QUICK OPTION",
-    name: "Reis Magos Fort",
-    category: "History & views",
-    rating: "4.4",
-    from: "18 min away",
-    visit: "45 min visit",
-    next: "14 min → dinner",
-    buffer: "Leaves 1h 02m buffer",
-    cost: "₹100",
-    image: goaHero,
-  },
-];
-
 function SmartExplorer() {
   const trip = useTrip();
   const [filter, setFilter] = useState("Best Fit");
@@ -812,17 +782,18 @@ function SmartExplorer() {
     queryFn: () => exploreNearbyPlaces({ interests: trip.plan?.trip.constraints.preferences.interests ?? [], window: window!, excludedPlaceIds: trip.addedRecommendations.map((item) => item.place.placeId), remainingBudget: trip.plan?.budget.remaining }),
     enabled: Boolean(trip.plan && window),
   });
-  const liveRecommendations = explorer.data ?? [];
+  const liveRecommendations = (explorer.data ?? []).filter((item) => filter === "Best Fit" || item.place.category.toLowerCase().includes(filter.toLowerCase()) || item.place.types.some((type) => type.toLowerCase().includes(filter.toLowerCase())));
+  const windowLabel = window ? `${new Date(window.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${new Date(window.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "No free window";
   return (
     <>
       <SectionHeading
         eyebrow="Smart free-time explorer"
-        title={trip.addedRecommendations.length ? "A nearby stop fits beautifully" : "You have 2h 45m free"}
-        copy="You’re in Candolim. Dinner is at 7:30 PM in Panjim. Let’s make the most of it."
+        title={window ? `${Math.floor(window.durationMinutes / 60)}h ${window.durationMinutes % 60}m free` : "No free time window yet"}
+        copy={window ? "Recommendations are route-, budget-, opening-hours-, and weather-checked." : "Add more itinerary detail to unlock nearby recommendations."}
         action={
           <span className="rounded-full bg-butter px-4 py-2 text-sm font-bold">
             <Clock3 className="mr-2 inline size-4" />
-            Ends safely by 6:40 PM
+            {windowLabel}
           </span>
         }
       />
@@ -842,6 +813,9 @@ function SmartExplorer() {
       </div>
       <div className="grid gap-6 xl:grid-cols-[1.08fr_.92fr]">
         <div className="flex snap-x gap-4 overflow-x-auto pb-4 xl:grid xl:grid-cols-1">
+          {explorer.isLoading && <p className="rounded-3xl border bg-card p-6 text-muted-foreground">Checking nearby places, routes, opening hours, and weather…</p>}
+          {explorer.isError && <p className="rounded-3xl border bg-peach/40 p-6">Couldn’t load recommendations. {explorer.error instanceof Error ? explorer.error.message : "Please try again."}</p>}
+          {!explorer.isLoading && !explorer.isError && window && liveRecommendations.length === 0 && <p className="rounded-3xl border bg-card p-6 text-muted-foreground">No places safely fit this window with the active filters.</p>}
           {liveRecommendations.map((item, index) => (
             <motion.article
               layout
@@ -894,6 +868,7 @@ function SmartExplorer() {
                     <Check className="mr-1 inline size-4 text-primary" />
                     {item.remainingBufferMinutes} min buffer
                   </p>
+                  <p className="mt-2 text-sm text-muted-foreground">Weather: {item.weather.fit} · {item.weather.reason.join(" · ") || "No weather signal"}</p>
                   <div className="mt-4 rounded-2xl bg-lavender/35 p-3 text-sm">
                     <p className="font-bold">Why this works</p>
                     <p className="mt-1 text-muted-foreground">
@@ -1321,6 +1296,8 @@ function Budget() {
 
 function Alerts() {
   const trip = useTrip();
+  const weatherAlerts = trip.plan?.weather?.alerts ?? [];
+  const freeWindow = trip.plan?.freeTimeWindows?.[0];
   const alerts = [
     {
       icon: Plane,
@@ -1329,20 +1306,20 @@ function Alerts() {
       copy: "Lunch and Fort Aguada are affected. I can preserve the beach and dinner, then move the fort to Day 3.",
       action: "Review new plan",
     },
-    {
+    ...weatherAlerts.map((alert) => ({
       icon: CloudSun,
       tone: "bg-sky/55",
-      title: "Rain expected Thursday, 2–5 PM",
-      copy: "Your beach visit is affected, but the Museum of Goa fits the same time window.",
-      action: "See weather option",
-    },
-    {
+      title: alert.headline,
+      copy: [alert.severity, alert.areas].filter(Boolean).join(" · ") || "Weather provider alert",
+      action: "View itinerary",
+    })),
+    ...(freeWindow ? [{
       icon: Sparkles,
       tone: "bg-butter/55",
-      title: "2h 45m opened up on Day 2",
-      copy: "Three places safely fit between Candolim and your dinner in Panjim.",
+      title: `${Math.floor(freeWindow.durationMinutes / 60)}h ${freeWindow.durationMinutes % 60}m free time available`,
+      copy: "Route-aware nearby recommendations are ready to check.",
       action: "Explore places",
-    },
+    }] : []),
     {
       icon: RefreshCw,
       tone: "bg-muted",

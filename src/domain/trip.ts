@@ -33,7 +33,7 @@ export interface Trip {
   status: "planning" | "ready" | "active" | "completed";
   createdAt: string;
   updatedAt: string;
-  dataMode: "demo" | "live";
+  dataMode: "demo" | "live" | "mixed" | string;
 }
 
 export interface FlightOption {
@@ -134,6 +134,23 @@ export interface PlaceRecommendation {
   score: number;
   reason: string[];
   feasible: boolean;
+  weather: WeatherAssessment;
+}
+
+export interface WeatherAssessment {
+  fit: "good" | "caution" | "unsuitable" | "unknown";
+  score: number;
+  reason: string[];
+}
+
+export interface WeatherForecast {
+  availability: string;
+  location: GeoPoint;
+  timezone?: string;
+  provider: string;
+  retrievedAt: string;
+  alerts: Array<{ headline: string; severity?: string; areas?: string; effectiveAt?: string; expiresAt?: string }>;
+  days: Array<{ date: string; conditionText: string; minTemperatureC?: number; maxTemperatureC?: number; chanceOfRain?: number; hours: Array<{ timestamp: string; conditionText: string; temperatureC?: number; chanceOfRain?: number }> }>;
 }
 
 export interface DataSourceStatus {
