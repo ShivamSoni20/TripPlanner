@@ -7,23 +7,39 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 - **Frontend:** TanStack Start, React 19, TanStack Router, Tailwind CSS, and the existing shadcn-based design system. `src/lib/trip-api.ts` is the browser's only planning boundary.
 - **Backend:** FastAPI exposes versioned REST endpoints. API keys and provider credentials remain server-side.
 - **Agent:** LangGraph owns the stateful planning transition. It delegates factual retrieval to typed providers and correctness checks to deterministic services.
-- **Providers:** flight, hotel, and place contracts have deterministic demo implementations. Live adapters can replace them without changing the graph.
+- **Providers:** flights and hotels use deterministic Indore–Goa demo fixtures; Places, Routes, and Weather use demo or configured server-side live adapters.
 - **Places:** `PLACES_PROVIDER=demo` uses deterministic fixtures; `PLACES_PROVIDER=google` selects Places API (New) Text Search, Nearby Search, and Place Details through a focused server-side client. Google payloads are normalized before entering graph state.
-- **Planning services:** budget arithmetic, schedule validation, free-time feasibility, and outbound URL validation do not depend on an LLM.
+- **Routes:** `ROUTES_PROVIDER=google` uses Google Routes and matrix responses. Missing or invalid durations fail closed.
+- **Weather:** `WEATHER_PROVIDER=weatherapi` uses WeatherAPI. Forecasts beyond the 14-day horizon report `not_available_yet` without an API call.
+- **Planning services:** budget arithmetic, schedule validation, opening-hour checks, free-time feasibility, weather suitability, and outbound URL validation do not depend on an LLM.
 - **Database:** the Supabase migration creates trip, option, itinerary, event, alert, run, and tool-call records. RLS is enabled and browser roles are denied until authenticated ownership policies are introduced.
 
 ## Request flow
 
 1. The existing trip prompt calls `POST /api/v1/trips/plan`.
 2. FastAPI builds a typed planning state and invokes the LangGraph workflow.
-3. Independent demo providers run concurrently.
+3. Independent provider searches run concurrently. Flight and hotel searches remain demo-only.
 4. The planner creates itinerary candidates and runs schedule and budget validation.
 5. A typed `TripPlan` is returned and normalized into the frontend domain model.
-6. All screens read the shared plan; the budget view no longer performs independent arithmetic.
+6. All screens read one normalized plan. Local Add to Today creates an in-memory itinerary item and derives the displayed budget and remaining free window without mutating the server response.
+
+```text
+React / TanStack Query
+    ↓ typed REST normalization
+FastAPI → LangGraph → TripPlanner
+                       ├── FlightsProvider (demo)
+                       ├── HotelProvider (demo)
+                       ├── PlacesProvider (demo / Google)
+                       ├── RoutesProvider (demo / Google)
+                       └── WeatherProvider (demo / WeatherAPI)
+
+TimeWindow → nearby Places → route matrix → opening-hour check
+           → hard time and budget filters → weather filter → ranking → Explorer UI
+```
 
 ## Deployment shape
 
-The frontend can deploy to Vercel or Cloudflare-compatible hosting. The Python service can deploy to Railway, Render, or another ASGI host. Supabase hosts PostgreSQL. Configure the frontend with `VITE_TRIPPILOT_API_URL`; configure the backend only with server-side secrets described in `.env.example`.
+The frontend can deploy to Vercel or Cloudflare-compatible hosting. The Python service can deploy to Railway, Render, or another ASGI host. The Supabase schema exists, but persistence wiring is pending. Configure the frontend with `VITE_TRIPPILOT_API_URL`; configure the backend only with server-side secrets described in `.env.example`.
 
 No browser code calls OpenRouter, Google, flight, hotel, weather, or Supabase service-role APIs directly.
 

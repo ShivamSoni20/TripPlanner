@@ -22,6 +22,11 @@ def _at(day, hour: int, minute: int = 0) -> datetime:
 
 class DemoFlightProvider:
     async def search(self, request: TripConstraints) -> list[FlightOption]:
+        if (
+            request.destination.strip().lower() != "goa"
+            or request.origin.strip().lower() != "indore"
+        ):
+            return []
         now = datetime.now(UTC)
         rows = [
             ("indigo-6e-813", "IndiGo", 7, 20, 9, 5, 0, 8400),
@@ -59,6 +64,8 @@ class DemoFlightProvider:
 
 class DemoHotelProvider:
     async def search(self, request: TripConstraints) -> list[HotelOption]:
+        if request.destination.strip().lower() != "goa":
+            return []
         now = datetime.now(UTC)
         rows = [
             ("casa-anjuna", "Casa Anjuna", 15.5732, 73.7419, 4.7, 8250),
@@ -85,7 +92,8 @@ class DemoHotelProvider:
 
 class DemoPlacesProvider:
     async def search(self, request: TripConstraints) -> list[PlaceCandidate]:
-        _ = request
+        if request.destination.strip().lower() != "goa":
+            return []
         return self._places()
 
     async def search_nearby(
@@ -96,11 +104,20 @@ class DemoPlacesProvider:
         radius_meters: int = 5000,
         max_results: int = 10,
     ) -> list[PlaceCandidate]:
-        _ = (location, radius_meters)
-        places = self._places()
+        places = [
+            place
+            for place in self._places()
+            if _haversine_distance_meters(location, place.location) <= radius_meters
+        ]
         if interests:
             normalized = {interest.lower() for interest in interests}
-            places = [place for place in places if normalized.intersection(place.interest_tags)]
+            places = [
+                place
+                for place in places
+                if normalized.intersection(place.interest_tags)
+                or place.category.lower() in normalized
+                or normalized.intersection(t.lower() for t in place.types)
+            ]
         return places[:max_results]
 
     async def get_details(self, place_id: str) -> PlaceCandidate | None:

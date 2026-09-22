@@ -10,7 +10,9 @@ Run:
 backend\.venv\Scripts\python.exe -m pytest backend -q
 ```
 
-Result on 22 September 2026: **42 tests passed**. These tests cover OpenRouter structured extraction, Google Places normalization, Google Routes duration parsing & matrix bounds, Smart Explorer feasibility & ranking, budget reconciliation, schedule travel validation, booking URL security, health provider status, and non-Goa itinerary planning. They are correctness tests, not a statistically meaningful planning benchmark.
+Result on 23 September 2026: **58 tests passed**. These correctness and integration tests cover OpenRouter extraction, Google Places/Routes normalization, WeatherAPI requests and errors, forecast horizon boundaries, weather suitability, Smart Explorer route/time/budget/opening-hour feasibility, schedule and budget validation, booking URL security, provider status, and non-Goa itinerary planning. They are not a statistically meaningful planning benchmark.
+
+Local demo API smoke check: the canonical Indore–Goa request returned 3 itinerary items, 1 free window, an available demo forecast, and 2 feasible Explorer recommendations. The frontend development server returned HTTP 200. Automated browser interaction could not be completed on this Windows host because the available browser controller failed to attach; no visual or click-through result is claimed.
 
 ## Benchmark status
 

@@ -2,11 +2,36 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.models.domain import GeoPoint, ItineraryItem, Money, TimeWindow
+from app.models.domain import (
+    GeoPoint,
+    ItineraryItem,
+    Money,
+    TimeWindow,
+    TripConstraints,
+    TripPreferences,
+)
+from app.providers.demo import DemoFlightProvider, DemoHotelProvider, DemoPlacesProvider
 from app.services.budget import calculate_budget
 from app.services.free_time import is_feasible
 from app.services.schedule import validate_schedule
 from app.services.url_security import is_safe_outbound_url
+
+
+@pytest.mark.asyncio
+async def test_goa_demo_inventory_is_not_attached_to_other_destinations() -> None:
+    constraints = TripConstraints(
+        origin="Pune",
+        destination="Kerala",
+        start_date=datetime(2026, 12, 2, tzinfo=UTC).date(),
+        end_date=datetime(2026, 12, 7, tzinfo=UTC).date(),
+        travelers=2,
+        budget=Money(amount=100_000),
+        preferences=TripPreferences(),
+    )
+    assert await DemoFlightProvider().search(constraints) == []
+    assert await DemoHotelProvider().search(constraints) == []
+    assert await DemoPlacesProvider().search(constraints) == []
+    assert await DemoPlacesProvider().search_nearby(GeoPoint(lat=12.9, lng=77.6), ["history"]) == []
 
 
 def item(id_: str, start_hour: int, end_hour: int, travel: int = 0) -> ItineraryItem:

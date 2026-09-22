@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from app.models.domain import (
     DailyWeather,
@@ -70,6 +71,12 @@ class WeatherApiClient:
                     "Weather request rejected",
                     retryable=False,
                 )
+            if 400 <= response.status_code < 500 and response.status_code != 429:
+                raise ProviderException(
+                    ProviderErrorCategory.INVALID_REQUEST,
+                    "Weather request rejected",
+                    retryable=False,
+                )
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt < self.max_retries:
                     await asyncio.sleep(0.05 * 2**attempt)
@@ -89,7 +96,11 @@ class WeatherApiClient:
                     "Weather service returned invalid JSON",
                     retryable=False,
                 ) from error
-            if not isinstance(payload, dict) or not isinstance(payload.get("forecast"), dict):
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get("forecast"), dict)
+                or not isinstance(payload["forecast"].get("forecastday"), list)
+            ):
                 raise ProviderException(
                     ProviderErrorCategory.INVALID_RESPONSE,
                     "Weather service returned an unexpected response",
@@ -116,8 +127,18 @@ class WeatherApiProvider:
         payload = await self.client.forecast(
             location=location, days=min(14, (end_date - today).days + 1)
         )
+        try:
+            return self._normalize(payload, location)
+        except (KeyError, TypeError, ValueError, ValidationError, AttributeError) as error:
+            raise ProviderException(
+                ProviderErrorCategory.INVALID_RESPONSE,
+                "Weather service returned an unexpected response",
+                retryable=False,
+            ) from error
+
+    def _normalize(self, payload: dict[str, Any], location: GeoPoint) -> WeatherForecast:
         days = []
-        for row in payload["forecast"].get("forecastday", []):
+        for row in payload["forecast"]["forecastday"]:
             day = row.get("day", {})
             condition = day.get("condition", {})
             hours = [

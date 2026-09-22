@@ -73,8 +73,10 @@ class TripPlanner:
             budget_limit=constraints.budget.amount,
             transport=flight_options[0].price.amount if flight_options else 0,
             hotel=hotel_options[0].total_price.amount if hotel_options else 0,
-            food=5400,
-            local_transport=3500,
+            food=540 * constraints.travelers * (constraints.end_date - constraints.start_date).days,
+            local_transport=350
+            * constraints.travelers
+            * (constraints.end_date - constraints.start_date).days,
             itinerary=itinerary,
         )
         now = datetime.now(UTC)

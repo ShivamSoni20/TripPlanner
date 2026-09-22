@@ -1,5 +1,4 @@
 import asyncio
-
 from datetime import timedelta
 
 from app.models.domain import (

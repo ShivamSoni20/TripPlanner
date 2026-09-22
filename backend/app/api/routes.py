@@ -108,8 +108,13 @@ def get_planner() -> TripPlanner:
 
     model_status = "live" if settings.travel_data_mode == "live" else "demo"
     data_mode = (
-        "live"
-        if (settings.places_provider == "google" or settings.routes_provider == "google")
+        "mixed"
+        if (
+            settings.travel_data_mode == "live"
+            or settings.places_provider == "google"
+            or settings.routes_provider == "google"
+            or settings.weather_provider == "weatherapi"
+        )
         else "demo"
     )
 

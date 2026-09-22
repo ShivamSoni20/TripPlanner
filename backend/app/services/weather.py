@@ -13,6 +13,7 @@ OUTDOOR_TYPES = {
     "park",
     "national_park",
     "historical_landmark",
+    "history",
     "tourist_attraction",
     "viewpoint",
 }

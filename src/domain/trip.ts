@@ -138,19 +138,53 @@ export interface PlaceRecommendation {
 }
 
 export interface WeatherAssessment {
-  fit: "good" | "caution" | "unsuitable" | "unknown";
+  fit: WeatherFit;
   score: number;
   reason: string[];
 }
 
+export type WeatherAvailability = "available" | "not_available_yet" | "unavailable";
+export type WeatherFit = "good" | "caution" | "unsuitable" | "unknown";
+
+export interface HourlyWeather {
+  timestamp: string;
+  temperatureC?: number;
+  feelsLikeC?: number;
+  conditionText: string;
+  conditionCode?: number;
+  chanceOfRain?: number;
+  precipitationMm?: number;
+  windKph?: number;
+}
+
+export interface DailyWeather {
+  date: string;
+  minTemperatureC?: number;
+  maxTemperatureC?: number;
+  conditionText: string;
+  conditionCode?: number;
+  chanceOfRain?: number;
+  totalPrecipitationMm?: number;
+  maxWindKph?: number;
+  hours: HourlyWeather[];
+}
+
+export interface WeatherAlert {
+  headline: string;
+  severity?: string;
+  areas?: string;
+  effectiveAt?: string;
+  expiresAt?: string;
+}
+
 export interface WeatherForecast {
-  availability: string;
+  availability: WeatherAvailability;
   location: GeoPoint;
   timezone?: string;
   provider: string;
   retrievedAt: string;
-  alerts: Array<{ headline: string; severity?: string; areas?: string; effectiveAt?: string; expiresAt?: string }>;
-  days: Array<{ date: string; conditionText: string; minTemperatureC?: number; maxTemperatureC?: number; chanceOfRain?: number; hours: Array<{ timestamp: string; conditionText: string; temperatureC?: number; chanceOfRain?: number }> }>;
+  alerts: WeatherAlert[];
+  days: DailyWeather[];
 }
 
 export interface DataSourceStatus {

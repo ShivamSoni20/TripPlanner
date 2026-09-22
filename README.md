@@ -4,7 +4,7 @@ TripPilot is a stateful AI travel operating system. A traveler describes a goal 
 
 The repository preserves the original Sunlit Cartography + Soft Bento interface while adding a typed FastAPI/LangGraph backend, provider boundaries, deterministic validation, a Supabase schema, tests, and CI.
 
-> Default provider status: **demo mode**. Flight and hotel inventory remains deterministic demo data. Places can use deterministic demo data or Google Places API (New) when `PLACES_PROVIDER=google` and a backend key are configured.
+> Default provider status: **demo mode**. Flight and hotel inventory remains deterministic demo data for the Indore–Goa fixture only. Places, routes, and weather have server-side live adapters when configured. No provider key is shipped in this repository.
 
 ## What works
 
@@ -14,6 +14,11 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 - Structured follow-up questions when critical trip fields are missing
 - Concurrent typed flight, hotel, and place providers
 - Google Places API (New) adapter for destination, nearby, and details lookup
+- Google Routes adapter for route and matrix duration checks; missing routes are never treated as a guessed duration
+- WeatherAPI adapter with normalized daily/hourly forecasts and alerts; dates 14 or more days ahead return `not_available_yet`
+- Smart Explorer combines backend Places, Routes, opening-hour checks, hard time/budget feasibility, and weather suitability
+- Explorer cards and Route Thread render normalized backend results; filters issue distinct backend queries
+- Generic Add to Today updates an in-memory itinerary, free window, and shared budget display
 - Centralized domain models and deterministic budget/schedule validation
 - Free-time feasibility, place scoring, and outbound-link security services
 - Shared frontend plan state and recoverable backend error UI
@@ -32,10 +37,10 @@ FastAPI → LangGraph planning workflow
               └── deterministic planning services
         │
         ▼
-Supabase PostgreSQL
+Supabase PostgreSQL schema (persistence integration pending)
 ```
 
-The LLM is reserved for semantic judgment and structured constraint extraction. Providers establish current facts. Normal code owns arithmetic, time, route feasibility, URL safety, and invariants. Users approve booking and major itinerary changes.
+OpenRouter performs structured constraint extraction when live mode is configured. Providers supply facts; deterministic code owns arithmetic, time, route feasibility, opening-hour checks, and URL safety. Booking occurs externally. The current disruption comparison is an explicitly labeled demo preview and does not modify a plan.
 
 Read [architecture](docs/architecture.md), [agent design](docs/agent-system.md), [evaluation](docs/evaluation.md), [failure analysis](docs/failure-analysis.md), and the [repository audit](docs/codebase-audit.md).
 
@@ -81,7 +86,7 @@ backend/.venv/Scripts/python.exe -m ruff check backend
 backend/.venv/Scripts/python.exe -m pytest backend -q
 ```
 
-The current backend suite contains seven passing correctness/API tests. Benchmark percentages are deliberately omitted until the full scenario evaluation suite is executed.
+The backend suite contains correctness and API tests. See [evaluation](docs/evaluation.md) for the latest measured count. Benchmark percentages are omitted until the full scenario evaluation suite is executed.
 
 ## Database
 
@@ -97,9 +102,10 @@ The timestamped migration under `supabase/migrations/` creates the initial schem
 ## Known limitations
 
 - Demo mode intentionally maps requests to the deterministic Goa evaluation fixture; live mode uses OpenRouter extraction.
-- Google Places is implemented but requires a project key for live verification; Routes, weather, flight, and hotel live adapters are not yet enabled.
-- The map remains the existing visual prototype.
-- Add-to-itinerary and disruption approval remain local UI interactions and are not persisted.
+- Google Places and Routes require `GOOGLE_MAPS_API_KEY`; WeatherAPI requires `WEATHER_API_KEY`. Live calls have not been verified on this host because those keys are unavailable.
+- Flights and hotels remain demo providers; for other origins/destinations they return no fixture inventory.
+- The map is an explicitly schematic visual, not geographic rendering.
+- Add to Today is local/in-memory and resets on refresh. The disruption view is a demo preview, not a persisted re-plan.
 - Authentication, ownership policies, full evaluations, and browser end-to-end tests remain incomplete.
 
 TripPilot never processes payments or issues tickets. Purchases happen on approved external provider sites.

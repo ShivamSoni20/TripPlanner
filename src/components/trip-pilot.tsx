@@ -37,7 +37,24 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { createTripPlan, exploreNearbyPlaces, type TripPlanResponse } from "@/lib/trip-api";
-import type { PlaceRecommendation } from "@/domain/trip";
+import {
+  createItineraryItemFromRecommendation,
+  deriveDisplayBudget,
+  formatDateRange,
+  formatDuration,
+  formatTime,
+  getSourceSummary,
+  mergeItinerary,
+  remainingWindow,
+  tripDayCount,
+  weatherSummary,
+} from "@/lib/trip-display";
+import type {
+  BudgetBreakdown,
+  ItineraryItem,
+  PlaceRecommendation,
+  TimeWindow,
+} from "@/domain/trip";
 import goaHero from "@/assets/goa-hero.jpg";
 import fortImage from "@/assets/fort-aguada.jpg";
 import beachImage from "@/assets/goa-beach.jpg";
@@ -56,14 +73,17 @@ type TripContextValue = {
   startPlanning: (prompt: string) => Promise<void>;
   view: TripView;
   setView: (value: TripView) => void;
-  selectedStop: number;
-  setSelectedStop: (value: number) => void;
+  selectedStopId: string | null;
+  setSelectedStopId: (value: string | null) => void;
+  activeFreeTimeWindowIndex: number;
+  setActiveFreeTimeWindowIndex: (value: number) => void;
+  activeFreeTimeWindow: TimeWindow | null;
+  displayItinerary: ItineraryItem[];
+  displayBudget: BudgetBreakdown | null;
   addedRecommendations: PlaceRecommendation[];
   addRecommendation: (value: PlaceRecommendation) => void;
   delayOpen: boolean;
   setDelayOpen: (value: boolean) => void;
-  replanned: boolean;
-  acceptReplan: () => void;
 };
 
 const TripContext = createContext<TripContextValue | null>(null);
@@ -71,10 +91,11 @@ const TripContext = createContext<TripContextValue | null>(null);
 export function TripProvider({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<AppStage>("prompt");
   const [view, setView] = useState<TripView>("overview");
-  const [selectedStop, setSelectedStop] = useState(2);
+  const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
+  const [activeFreeTimeWindowIndex, setActiveFreeTimeWindowIndex] = useState(0);
   const [addedRecommendations, setAddedRecommendations] = useState<PlaceRecommendation[]>([]);
+  const [locallyAddedItems, setLocallyAddedItems] = useState<ItineraryItem[]>([]);
   const [delayOpen, setDelayOpen] = useState(false);
-  const [replanned, setReplanned] = useState(false);
   const [plan, setPlan] = useState<TripPlanResponse | null>(null);
   const [planningError, setPlanningError] = useState<string | null>(null);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
@@ -91,46 +112,58 @@ export function TripProvider({ children }: { children: ReactNode }) {
         return;
       }
       setPlan(response);
+      setAddedRecommendations([]);
+      setLocallyAddedItems([]);
+      setActiveFreeTimeWindowIndex(0);
+      setSelectedStopId(response.itinerary[0]?.id ?? null);
       setStage("trip");
     } catch (error) {
       setPlanningError(error instanceof Error ? error.message : "Trip planning failed");
     }
   };
-  const value = useMemo(
-    () => ({
-      stage,
-      setStage,
-      plan,
-      planningError,
-      followUpQuestion,
-      startPlanning,
-      view,
-      setView,
-      selectedStop,
-      setSelectedStop,
-      addedRecommendations,
-      addRecommendation: (value) => setAddedRecommendations((current) => [...current, value]),
-      delayOpen,
-      setDelayOpen,
-      replanned,
-      acceptReplan: () => {
-        setReplanned(true);
-        setDelayOpen(false);
-        setView("itinerary");
-      },
-    }),
-    [
-      stage,
-      plan,
-      planningError,
-      followUpQuestion,
-      view,
-      selectedStop,
-      addedRecommendations,
-      delayOpen,
-      replanned,
-    ],
+  const displayItinerary = useMemo(
+    () => mergeItinerary(plan?.itinerary ?? [], locallyAddedItems),
+    [plan, locallyAddedItems],
   );
+  const displayBudget = useMemo(
+    () => (plan ? deriveDisplayBudget(plan.budget, locallyAddedItems) : null),
+    [plan, locallyAddedItems],
+  );
+  const activeFreeTimeWindow = useMemo(() => {
+    const original = plan?.freeTimeWindows[activeFreeTimeWindowIndex];
+    return original ? remainingWindow(original, locallyAddedItems) : null;
+  }, [plan, activeFreeTimeWindowIndex, locallyAddedItems]);
+  const addRecommendation = (recommendation: PlaceRecommendation) => {
+    if (!recommendation.feasible || !activeFreeTimeWindow) return;
+    const placeId = recommendation.place.placeId;
+    if (displayItinerary.some((item) => item.placeId === placeId)) return;
+    if (displayBudget && recommendation.place.price.amount > displayBudget.remaining) return;
+    const item = createItineraryItemFromRecommendation(recommendation, activeFreeTimeWindow);
+    setLocallyAddedItems((current) => [...current, item]);
+    setAddedRecommendations((current) => [...current, recommendation]);
+    setSelectedStopId(item.id);
+  };
+  const value: TripContextValue = {
+    stage,
+    setStage,
+    plan,
+    planningError,
+    followUpQuestion,
+    startPlanning,
+    view,
+    setView,
+    selectedStopId,
+    setSelectedStopId,
+    activeFreeTimeWindowIndex,
+    setActiveFreeTimeWindowIndex,
+    activeFreeTimeWindow,
+    displayItinerary,
+    displayBudget,
+    addedRecommendations,
+    addRecommendation,
+    delayOpen,
+    setDelayOpen,
+  };
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>;
 }
 
@@ -279,9 +312,7 @@ export function AgentProgress() {
           <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-lavender px-4 py-2 text-sm font-semibold">
             <Sparkles className="star-motion size-4 text-primary" /> TripPilot is working
           </div>
-          <h1 className="text-4xl font-bold leading-tight sm:text-5xl">
-            Planning your Goa adventure
-          </h1>
+          <h1 className="text-4xl font-bold leading-tight sm:text-5xl">Planning your adventure</h1>
           <p className="mt-4 text-lg text-muted-foreground">
             Connecting the details so every day flows naturally.
           </p>
@@ -324,7 +355,7 @@ export function AgentProgress() {
             )}
           </div>
         </div>
-        <TripMap compact selected={1} onSelect={() => undefined} />
+        <TripMap compact items={[]} selectedId={null} onSelect={() => undefined} />
       </section>
     </main>
   );
@@ -371,8 +402,24 @@ export function AppShell() {
           </nav>
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
-              <p className="text-sm font-semibold">Goa · 5 days</p>
-              <p className="text-xs text-muted-foreground">12–17 Nov</p>
+              <p className="text-sm font-semibold">
+                {trip.plan?.trip.constraints.destination} ·{" "}
+                {trip.plan
+                  ? tripDayCount(
+                      trip.plan.trip.constraints.startDate,
+                      trip.plan.trip.constraints.endDate,
+                    )
+                  : 0}{" "}
+                days
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {trip.plan
+                  ? formatDateRange(
+                      trip.plan.trip.constraints.startDate,
+                      trip.plan.trip.constraints.endDate,
+                    )
+                  : ""}
+              </p>
             </div>
             <button
               aria-label="Open alerts"
@@ -469,33 +516,36 @@ function SectionHeading({
 
 function TripHero() {
   const { plan, setView } = useTrip();
-  const destination = plan?.trip.constraints.destination ?? "Goa";
-  const travelers = plan?.trip.constraints.travelers ?? 2;
+  const destination = plan?.trip.constraints.destination ?? "Your destination";
+  const travelers = plan?.trip.constraints.travelers ?? 0;
   const start = plan?.trip.constraints.startDate;
   const end = plan?.trip.constraints.endDate;
-  const weather = plan?.weather?.days[0];
-  const sources = plan?.sources;
-  const liveSources = sources && Object.values(sources).some((source) => source !== "demo" && source !== "unavailable");
+  const isGoa = destination.toLowerCase().includes("goa");
   return (
-    <section className="relative min-h-[390px] overflow-hidden rounded-[28px] text-primary-foreground">
-      <img
-        src={goaHero}
-        width={1600}
-        height={1000}
-        className="absolute inset-0 h-full w-full object-cover"
-        alt="Sunlit coastal view across Goa"
-      />
+    <section className="relative min-h-[390px] overflow-hidden rounded-[28px] bg-foreground text-primary-foreground">
+      {isGoa && (
+        <img
+          src={goaHero}
+          width={1600}
+          height={1000}
+          className="absolute inset-0 h-full w-full object-cover"
+          alt="Sunlit coastal view across Goa"
+        />
+      )}
       <div className="absolute inset-0 bg-[linear-gradient(90deg,color-mix(in_oklab,var(--foreground)_82%,transparent),transparent_78%)]" />
       <div className="relative flex min-h-[390px] max-w-2xl flex-col justify-end p-6 md:p-10">
-        <div className="mb-auto flex w-fit items-center gap-2 rounded-full bg-background/90 px-3 py-2 text-sm font-semibold text-foreground">
+        <div className="mb-auto flex w-fit max-w-full items-center gap-2 rounded-2xl bg-background/90 px-3 py-2 text-sm font-semibold text-foreground">
           <span className="size-2 rounded-full bg-aqua" /> Trip ready ·{" "}
-          {liveSources ? "Provider data" : "Demo data"}
+          {plan ? getSourceSummary(plan.sources, plan.weather) : "Trip data"}
         </div>
-        <p className="text-sm font-bold uppercase">{start && end ? `${start} – ${end}` : "Your travel dates"}</p>
+        <p className="text-sm font-bold uppercase">
+          {start && end ? formatDateRange(start, end) : "Your travel dates"}
+        </p>
         <h1 className="mt-2 text-6xl font-bold uppercase md:text-8xl">{destination}</h1>
         <div className="mt-5 flex flex-wrap gap-3 text-sm font-semibold">
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
-            <CalendarDays className="mr-2 inline size-4" />{start && end ? `${Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000))} days` : "Trip"}
+            <CalendarDays className="mr-2 inline size-4" />
+            {start && end ? `${tripDayCount(start, end)} days` : "Trip"}
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <Users className="mr-2 inline size-4" />
@@ -503,7 +553,7 @@ function TripHero() {
           </span>
           <span className="rounded-full bg-background/15 px-3 py-2 backdrop-blur">
             <CloudSun className="mr-2 inline size-4" />
-            {weather?.maxTemperatureC != null ? `${Math.round(weather.maxTemperatureC)}° · ${weather.conditionText}` : "Weather pending"}
+            {weatherSummary(plan?.weather, start)}
           </span>
         </div>
         <Button
@@ -518,10 +568,11 @@ function TripHero() {
 }
 
 function BudgetMeter({ compact = false }: { compact?: boolean }) {
-  const { plan } = useTrip();
-  const spent = plan?.budget.total ?? 28_450;
-  const limit = plan?.trip.constraints.budget.amount ?? 30_000;
-  const remaining = plan?.budget.remaining ?? 1_550;
+  const { plan, displayBudget } = useTrip();
+  if (!plan || !displayBudget) return null;
+  const spent = displayBudget.total;
+  const limit = plan.trip.constraints.budget.amount;
+  const remaining = displayBudget.remaining;
   const percentage = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
   return (
     <div className={cn("rounded-3xl border bg-mint/45", compact ? "p-5" : "p-6")}>
@@ -550,33 +601,48 @@ function BudgetMeter({ compact = false }: { compact?: boolean }) {
 }
 
 function Overview() {
-  const { setView, setDelayOpen } = useTrip();
+  const {
+    plan,
+    setView,
+    setDelayOpen,
+    displayItinerary,
+    activeFreeTimeWindow,
+    selectedStopId,
+    setSelectedStopId,
+  } = useTrip();
+  const flight = plan?.flights[0];
+  const hotel = plan?.hotels[0];
+  const firstStop = displayItinerary[0];
   return (
     <div className="space-y-6">
       <TripHero />
       <div className="grid gap-6 lg:grid-cols-[.85fr_1.15fr]">
         <div className="grid gap-6">
           <BudgetMeter />
-          <button
-            onClick={() => setView("explore")}
-            className="group rounded-3xl border bg-butter/55 p-6 text-left transition hover:-translate-y-1"
-          >
-            <div className="flex items-start gap-4">
-              <span className="flex size-11 items-center justify-center rounded-2xl bg-card text-primary">
-                <Sparkles />
-              </span>
-              <div>
-                <p className="font-display text-xl font-bold">You have 2h 45m free on Day 2</p>
-                <p className="mt-2 text-muted-foreground">
-                  I found three nearby places that fit before dinner in Panjim.
-                </p>
-                <span className="mt-5 inline-flex items-center gap-2 font-bold text-primary">
-                  Explore free time{" "}
-                  <ArrowRight className="size-4 transition group-hover:translate-x-1" />
+          {activeFreeTimeWindow && (
+            <button
+              onClick={() => setView("explore")}
+              className="group rounded-3xl border bg-butter/55 p-6 text-left transition hover:-translate-y-1"
+            >
+              <div className="flex items-start gap-4">
+                <span className="flex size-11 items-center justify-center rounded-2xl bg-card text-primary">
+                  <Sparkles />
                 </span>
+                <div>
+                  <p className="font-display text-xl font-bold">
+                    You have {formatDuration(activeFreeTimeWindow.durationMinutes)} free
+                  </p>
+                  <p className="mt-2 text-muted-foreground">
+                    Explore what fits before your next scheduled stop.
+                  </p>
+                  <span className="mt-5 inline-flex items-center gap-2 font-bold text-primary">
+                    Explore free time{" "}
+                    <ArrowRight className="size-4 transition group-hover:translate-x-1" />
+                  </span>
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+          )}
           <button
             onClick={() => setDelayOpen(true)}
             className="flex items-center justify-between rounded-3xl border bg-peach/55 p-5 text-left"
@@ -584,9 +650,9 @@ function Overview() {
             <div className="flex items-center gap-3">
               <Plane className="size-5 text-primary" />
               <div>
-                <p className="font-bold">Preview a real-world change</p>
+                <p className="font-bold">Demo disruption preview</p>
                 <p className="text-sm text-muted-foreground">
-                  Simulate a delayed arrival and re-plan Day 1.
+                  See a sample delayed-arrival comparison.
                 </p>
               </div>
             </div>
@@ -594,8 +660,10 @@ function Overview() {
           </button>
         </div>
         <TripMap
-          selected={2}
+          items={displayItinerary}
+          selectedId={selectedStopId}
           onSelect={(id) => {
+            setSelectedStopId(id);
             setView("itinerary");
           }}
         />
@@ -603,21 +671,37 @@ function Overview() {
       <div className="grid gap-4 sm:grid-cols-3">
         <MiniStatus
           icon={Plane}
-          label="Flight saved"
-          value="IndiGo · 07:20"
-          note="IDR → GOI · Direct"
+          label="Flight option"
+          value={
+            flight
+              ? `${flight.airline} · ${formatTime(flight.departureTime)}`
+              : "No flight option available"
+          }
+          note={
+            flight
+              ? `${flight.departureAirport} → ${flight.arrivalAirport} · ${flight.stops ? `${flight.stops} stop` : "Direct"} · ${plan?.sources.flights} data`
+              : "Search can be retried later"
+          }
         />
         <MiniStatus
           icon={Hotel}
-          label="Stay selected"
-          value="Casa Anjuna"
-          note="₹8,250 · 5 nights"
+          label="Stay option"
+          value={hotel?.name ?? "No hotel option available"}
+          note={
+            hotel
+              ? `₹${hotel.totalPrice.amount.toLocaleString("en-IN")} total · ${plan?.sources.hotels} data`
+              : "Search can be retried later"
+          }
         />
         <MiniStatus
           icon={Utensils}
-          label="Up next"
-          value="Dinner at 7:30 PM"
-          note="Mum's Kitchen · Panjim"
+          label="First planned stop"
+          value={firstStop?.title ?? "No stops planned"}
+          note={
+            firstStop
+              ? `${formatDateRange(firstStop.startAt.slice(0, 10), firstStop.startAt.slice(0, 10))} · ${formatTime(firstStop.startAt)}`
+              : "Your itinerary is empty"
+          }
         />
       </div>
     </div>
@@ -647,96 +731,95 @@ function MiniStatus({
   );
 }
 
-const stops = [
-  {
-    id: 1,
-    time: "09:00",
-    title: "Breakfast",
-    place: "Candolim",
-    duration: "1h",
-    image: hotelImage,
-  },
-  {
-    id: 2,
-    time: "10:30",
-    title: "Fort Aguada",
-    place: "Sinquerim",
-    duration: "1h 15m",
-    image: fortImage,
-  },
-  { id: 3, time: "19:30", title: "Dinner", place: "Panjim", duration: "1h 30m", image: beachImage },
-];
-
 function RouteThread() {
   const trip = useTrip();
-  const shown = trip.addedRecommendations.length ? stops : stops.filter((stop) => stop.id !== 2);
+  const shown = trip.displayItinerary;
   return (
     <div className="relative space-y-2 pl-9 before:absolute before:bottom-12 before:left-[13px] before:top-10 before:w-px before:bg-border">
+      {shown.length === 0 && (
+        <p className="p-5 text-muted-foreground">No itinerary stops are available yet.</p>
+      )}
       {shown.map((stop, index) => (
         <div key={stop.id}>
+          {index > 0 && (
+            <div className="my-3 ml-1 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+              <Navigation className="size-3.5" />
+              {stop.travelFromPreviousMinutes} min travel from previous stop
+            </div>
+          )}
           <button
-            onClick={() => trip.setSelectedStop(stop.id)}
+            onClick={() => trip.setSelectedStopId(stop.id)}
             className={cn(
               "relative flex w-full gap-4 rounded-3xl border bg-card p-4 text-left transition",
-              trip.selectedStop === stop.id &&
+              trip.selectedStopId === stop.id &&
                 "border-primary shadow-[0_8px_30px_-18px_var(--coral)]",
             )}
           >
             <span
               className={cn(
                 "absolute -left-[34px] top-7 z-10 flex size-7 items-center justify-center rounded-full border-4 border-background text-xs font-bold",
-                trip.selectedStop === stop.id
+                trip.selectedStopId === stop.id
                   ? "bg-primary text-primary-foreground"
                   : "bg-foreground text-background",
               )}
             >
-              {stop.id}
+              {index + 1}
             </span>
-            <img
-              src={stop.image}
-              loading="lazy"
-              width={1200}
-              height={900}
-              className="h-24 w-24 rounded-2xl object-cover"
-              alt=""
-            />
             <div className="min-w-0 py-1">
-              <p className="text-sm font-bold text-primary">{stop.time}</p>
+              <p className="text-sm font-bold text-primary">
+                {formatDateRange(stop.startAt.slice(0, 10), stop.startAt.slice(0, 10))} ·{" "}
+                {formatTime(stop.startAt)}
+              </p>
               <h3 className="mt-1 text-lg font-bold">{stop.title}</h3>
               <p className="text-sm text-muted-foreground">
-                {stop.place} · {stop.duration}
+                {stop.category} ·{" "}
+                {formatDuration(
+                  Math.round((Date.parse(stop.endAt) - Date.parse(stop.startAt)) / 60_000),
+                )}
               </p>
             </div>
           </button>
-          {index < shown.length - 1 && (
-            <div className="my-3 ml-1 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-              <Navigation className="size-3.5" />
-              {stop.id === 1 ? "12 min drive" : "28 min drive"}
-            </div>
+          {trip.plan?.freeTimeWindows.map(
+            (window, windowIndex) =>
+              stop.endAt === window.startAt && (
+                <FreeTimeCard key={window.startAt} windowIndex={windowIndex} />
+              ),
           )}
-          {!trip.addedRecommendations.length && stop.id === 1 && <FreeTimeCard />}
         </div>
       ))}
     </div>
   );
 }
 
-function FreeTimeCard() {
-  const { setView, plan } = useTrip();
-  const window = plan?.freeTimeWindows?.[0];
+function FreeTimeCard({ windowIndex }: { windowIndex: number }) {
+  const { setView, plan, setActiveFreeTimeWindowIndex, displayItinerary } = useTrip();
+  const original = plan?.freeTimeWindows[windowIndex];
+  const window = original
+    ? remainingWindow(
+        original,
+        displayItinerary.filter((item) => item.id.startsWith("local-")),
+      )
+    : null;
   if (!window) return null;
-  const start = new Date(window.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const end = new Date(window.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const start = formatTime(window.startAt);
+  const end = formatTime(window.endAt);
   return (
     <button
-      onClick={() => setView("explore")}
+      onClick={() => {
+        setActiveFreeTimeWindowIndex(windowIndex);
+        setView("explore");
+      }}
       className="relative my-3 w-full rounded-3xl border border-dashed border-primary/50 bg-butter/55 p-5 text-left"
     >
       <span className="absolute -left-[34px] top-6 z-10 flex size-7 items-center justify-center rounded-full border-4 border-background bg-butter">
         <Sparkles className="size-3 text-primary" />
       </span>
-      <p className="text-sm font-bold text-primary">{start}–{end}</p>
-      <p className="mt-1 text-xl font-bold">{Math.floor(window.durationMinutes / 60)}h {window.durationMinutes % 60}m free</p>
+      <p className="text-sm font-bold text-primary">
+        {start}–{end}
+      </p>
+      <p className="mt-1 text-xl font-bold">
+        {Math.floor(window.durationMinutes / 60)}h {window.durationMinutes % 60}m free
+      </p>
       <p className="mt-1 text-sm text-muted-foreground">
         Check route-aware activities that can safely fit this window.
       </p>
@@ -749,15 +832,16 @@ function FreeTimeCard() {
 
 function Itinerary() {
   const trip = useTrip();
+  const destination = trip.plan?.trip.constraints.destination ?? "Your trip";
   return (
     <>
       <SectionHeading
-        eyebrow="Day 2 of 5"
-        title={trip.replanned ? "North Goa · revised" : "North Goa"}
+        eyebrow="Day by day"
+        title={`${destination} itinerary`}
         copy={
           trip.addedRecommendations.length
-            ? "Fort Aguada fits naturally before dinner, with a 50-minute safety buffer."
-            : "A relaxed morning, an open afternoon, and dinner across the Mandovi."
+            ? `${trip.addedRecommendations.at(-1)?.place.name} was added locally to your itinerary.`
+            : "Your scheduled activities and travel times."
         }
       />
       <div className="grid gap-6 lg:grid-cols-[.85fr_1.15fr]">
@@ -765,7 +849,11 @@ function Itinerary() {
           <RouteThread />
         </section>
         <div className="lg:sticky lg:top-28 lg:h-fit">
-          <TripMap selected={trip.selectedStop} onSelect={trip.setSelectedStop} />
+          <TripMap
+            items={trip.displayItinerary}
+            selectedId={trip.selectedStopId}
+            onSelect={trip.setSelectedStopId}
+          />
         </div>
       </div>
     </>
@@ -775,21 +863,59 @@ function Itinerary() {
 function SmartExplorer() {
   const trip = useTrip();
   const [filter, setFilter] = useState("Best Fit");
-  const [selected, setSelected] = useState(0);
-  const window = trip.plan?.freeTimeWindows?.[0];
+  const [selected, setSelected] = useState<string | null>(null);
+  const window = trip.activeFreeTimeWindow;
+  const interests =
+    filter === "Best Fit"
+      ? (trip.plan?.trip.constraints.preferences.interests ?? [])
+      : [filter.toLowerCase()];
+  const excludedPlaceIds = [
+    ...new Set(
+      trip.displayItinerary.map((item) => item.placeId).filter((id): id is string => Boolean(id)),
+    ),
+  ].sort();
   const explorer = useQuery({
-    queryKey: ["trip-explorer", trip.plan?.trip.id, window?.startAt, window?.endAt, trip.addedRecommendations.map((item) => item.place.placeId)],
-    queryFn: () => exploreNearbyPlaces({ interests: trip.plan?.trip.constraints.preferences.interests ?? [], window: window!, excludedPlaceIds: trip.addedRecommendations.map((item) => item.place.placeId), remainingBudget: trip.plan?.budget.remaining }),
+    queryKey: [
+      "trip-explorer",
+      trip.plan?.trip.id,
+      window?.startAt,
+      window?.endAt,
+      window?.origin.lat,
+      window?.origin.lng,
+      window?.nextDestination?.lat,
+      window?.nextDestination?.lng,
+      interests.join("|"),
+      excludedPlaceIds.join("|"),
+      trip.displayBudget?.remaining,
+    ],
+    queryFn: ({ signal }) =>
+      exploreNearbyPlaces(
+        {
+          interests,
+          window: window!,
+          excludedPlaceIds,
+          ...(trip.displayBudget ? { remainingBudget: trip.displayBudget.remaining } : {}),
+        },
+        signal,
+      ),
     enabled: Boolean(trip.plan && window),
   });
-  const liveRecommendations = (explorer.data ?? []).filter((item) => filter === "Best Fit" || item.place.category.toLowerCase().includes(filter.toLowerCase()) || item.place.types.some((type) => type.toLowerCase().includes(filter.toLowerCase())));
-  const windowLabel = window ? `${new Date(window.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${new Date(window.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "No free window";
+  const liveRecommendations = explorer.data ?? [];
+  const windowLabel = window
+    ? `${formatTime(window.startAt)}–${formatTime(window.endAt)}`
+    : "No free window";
   return (
     <>
       <SectionHeading
         eyebrow="Smart free-time explorer"
-        title={window ? `${Math.floor(window.durationMinutes / 60)}h ${window.durationMinutes % 60}m free` : "No free time window yet"}
-        copy={window ? "Recommendations are route-, budget-, opening-hours-, and weather-checked." : "Add more itinerary detail to unlock nearby recommendations."}
+        title={
+          window ? `${formatDuration(window.durationMinutes)} free` : "No free time window yet"
+        }
+        copy={
+          window
+            ? "Recommendations are route-, budget-, opening-hours-, and weather-checked."
+            : "Add more itinerary detail to unlock nearby recommendations."
+        }
         action={
           <span className="rounded-full bg-butter px-4 py-2 text-sm font-bold">
             <Clock3 className="mr-2 inline size-4" />
@@ -813,27 +939,44 @@ function SmartExplorer() {
       </div>
       <div className="grid gap-6 xl:grid-cols-[1.08fr_.92fr]">
         <div className="flex snap-x gap-4 overflow-x-auto pb-4 xl:grid xl:grid-cols-1">
-          {explorer.isLoading && <p className="rounded-3xl border bg-card p-6 text-muted-foreground">Checking nearby places, routes, opening hours, and weather…</p>}
-          {explorer.isError && <p className="rounded-3xl border bg-peach/40 p-6">Couldn’t load recommendations. {explorer.error instanceof Error ? explorer.error.message : "Please try again."}</p>}
-          {!explorer.isLoading && !explorer.isError && window && liveRecommendations.length === 0 && <p className="rounded-3xl border bg-card p-6 text-muted-foreground">No places safely fit this window with the active filters.</p>}
+          {explorer.isLoading && (
+            <p className="rounded-3xl border bg-card p-6 text-muted-foreground">
+              Checking nearby places, routes, opening hours, and weather…
+            </p>
+          )}
+          {explorer.isError && (
+            <div className="rounded-3xl border bg-peach/40 p-6">
+              <p>
+                TripPilot couldn't check nearby options.{" "}
+                {explorer.error instanceof Error ? explorer.error.message : "Please try again."}
+              </p>
+              <Button className="mt-3" onClick={() => void explorer.refetch()}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {!explorer.isLoading &&
+            !explorer.isError &&
+            window &&
+            liveRecommendations.length === 0 && (
+              <p className="rounded-3xl border bg-card p-6 text-muted-foreground">
+                Nothing worthwhile fits safely before your next activity.
+              </p>
+            )}
           {liveRecommendations.map((item, index) => (
             <motion.article
               layout
               key={item.place.placeId}
-              aria-current={selected === index ? "true" : undefined}
+              aria-current={selected === item.place.placeId ? "true" : undefined}
               className={cn(
                 "min-w-[86vw] snap-center overflow-hidden rounded-[28px] border bg-card sm:min-w-[520px] xl:min-w-0",
-                selected === index && "border-primary",
+                selected === item.place.placeId && "border-primary",
               )}
             >
               <div className="grid sm:grid-cols-[210px_1fr]">
-                <img
-                  src={fortImage}
-                  loading="lazy"
-                  width={1200}
-                  height={900}
-                  className="h-52 w-full object-cover sm:h-full"
-                  alt={item.place.name}
+                <div
+                  className="h-52 w-full bg-[radial-gradient(circle_at_30%_25%,var(--butter),transparent_45%),linear-gradient(145deg,var(--aqua),var(--sky))] sm:h-full"
+                  aria-hidden="true"
                 />
                 <div className="p-5">
                   <div className="flex items-center justify-between">
@@ -868,24 +1011,38 @@ function SmartExplorer() {
                     <Check className="mr-1 inline size-4 text-primary" />
                     {item.remainingBufferMinutes} min buffer
                   </p>
-                  <p className="mt-2 text-sm text-muted-foreground">Weather: {item.weather.fit} · {item.weather.reason.join(" · ") || "No weather signal"}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {
+                      {
+                        good: "Good for this window",
+                        caution: "Weather caution",
+                        unsuitable: "Weather not recommended",
+                        unknown: "Forecast unavailable",
+                      }[item.weather.fit]
+                    }{" "}
+                    · {item.weather.reason.join(" · ") || "No weather signal"}
+                  </p>
                   <div className="mt-4 rounded-2xl bg-lavender/35 p-3 text-sm">
                     <p className="font-bold">Why this works</p>
-                    <p className="mt-1 text-muted-foreground">
-                      {item.reason.join(" · ")}
-                    </p>
+                    <p className="mt-1 text-muted-foreground">{item.reason.join(" · ")}</p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => setSelected(index)}
+                      onClick={() => setSelected(item.place.placeId)}
                       className="rounded-full"
                     >
                       <MapPin /> Preview route
                     </Button>
                     <Button
-                      disabled={trip.addedRecommendations.some((added) => added.place.placeId === item.place.placeId)}
+                      disabled={
+                        trip.displayItinerary.some(
+                          (added) => added.placeId === item.place.placeId,
+                        ) ||
+                        !item.feasible ||
+                        item.place.price.amount > (trip.displayBudget?.remaining ?? 0)
+                      }
                       onClick={(event) => {
                         event.stopPropagation();
                         trip.addRecommendation(item);
@@ -893,17 +1050,17 @@ function SmartExplorer() {
                       className="rounded-full"
                     >
                       <Plus />
-                      {trip.addedRecommendations.some((added) => added.place.placeId === item.place.placeId) ? "Added to today" : "Add to today"}
+                      {trip.displayItinerary.some((added) => added.placeId === item.place.placeId)
+                        ? "Added to today"
+                        : "Add to today"}
                     </Button>
-                    {item.place.mapsUrl && <Button asChild variant="outline" className="rounded-full">
-                      <a
-                        href={item.place.mapsUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open in Maps <ExternalLink />
-                      </a>
-                    </Button>}
+                    {item.place.mapsUrl && (
+                      <Button asChild variant="outline" className="rounded-full">
+                        <a href={item.place.mapsUrl} target="_blank" rel="noreferrer">
+                          Open in Maps <ExternalLink />
+                        </a>
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -912,9 +1069,10 @@ function SmartExplorer() {
         </div>
         <div className="xl:sticky xl:top-28 xl:h-fit">
           <TripMap
-            selected={selected + 2}
-            onSelect={(id) => setSelected(Math.max(0, id - 2))}
-            candidates
+            items={[]}
+            recommendations={liveRecommendations}
+            selectedId={selected}
+            onSelect={setSelected}
           />
         </div>
       </div>
@@ -923,22 +1081,22 @@ function SmartExplorer() {
 }
 
 function TripMap({
-  selected,
+  selectedId,
   onSelect,
+  items,
+  recommendations = [],
   compact = false,
-  candidates = false,
 }: {
-  selected: number;
-  onSelect: (id: number) => void;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  items: ItineraryItem[];
+  recommendations?: PlaceRecommendation[];
   compact?: boolean;
-  candidates?: boolean;
 }) {
-  const pins = [
-    { id: 1, x: "20%", y: "68%", label: "You" },
-    { id: 2, x: "38%", y: "36%", label: "Fort Aguada" },
-    { id: 3, x: "69%", y: "54%", label: "Dinner" },
-    { id: 4, x: "52%", y: "72%", label: "Beach" },
-  ];
+  const pins = recommendations.length
+    ? recommendations.map((item) => ({ id: item.place.placeId, label: item.place.name }))
+    : items.map((item) => ({ id: item.id, label: item.title }));
+  const visiblePins = pins.slice(0, 12);
   return (
     <div
       className={cn(
@@ -977,46 +1135,48 @@ function TripMap({
         />
       </svg>
       <div className="absolute left-5 top-5 z-10 rounded-2xl border bg-card/95 p-3 shadow-sm">
-        <p className="text-xs font-bold uppercase text-muted-foreground">Route preview</p>
-        <p className="mt-1 font-bold">Candolim → Panjim</p>
+        <p className="text-xs font-bold uppercase text-muted-foreground">Illustrative route view</p>
+        <p className="mt-1 font-bold">{visiblePins.length} visible stops</p>
       </div>
-      {pins.slice(0, candidates ? 4 : 3).map((pin) => (
+      {visiblePins.map((pin, index) => (
         <button
           key={pin.id}
           onClick={() => onSelect(pin.id)}
-          style={{ left: pin.x, top: pin.y }}
+          style={{ left: `${17 + (index % 4) * 22}%`, top: `${31 + Math.floor(index / 4) * 22}%` }}
           aria-label={`Select ${pin.label}`}
           className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
         >
           <span
             className={cn(
               "flex size-10 items-center justify-center rounded-full border-4 border-card text-sm font-bold shadow-lg transition",
-              selected === pin.id
+              selectedId === pin.id
                 ? "scale-110 bg-primary text-primary-foreground"
                 : "bg-card text-foreground",
             )}
           >
-            {pin.id}
+            {index + 1}
           </span>
-          <span className="mt-1 block whitespace-nowrap rounded-full bg-card/90 px-2 py-1 text-xs font-bold shadow-sm">
+          <span className="mt-1 block max-w-24 truncate rounded-full bg-card/90 px-2 py-1 text-xs font-bold shadow-sm">
             {pin.label}
           </span>
         </button>
       ))}
       <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between rounded-2xl border bg-card/95 p-3 text-sm">
         <span className="flex items-center gap-2">
-          <LocateFixed className="size-4 text-primary" /> Real travel time included
+          <LocateFixed className="size-4 text-primary" /> Schematic only
         </span>
-        <span className="font-bold">40 min total</span>
+        <span className="font-bold">See itinerary for travel times</span>
       </div>
     </div>
   );
 }
 
-function BookingLinkButton() {
+function BookingLinkButton({ url }: { url: string | undefined }) {
+  if (!url || !/^https:\/\//i.test(url))
+    return <span className="text-sm text-muted-foreground">Booking link unavailable</span>;
   return (
     <Button asChild className="rounded-full">
-      <a href="https://www.google.com/travel" target="_blank" rel="noreferrer">
+      <a href={url} target="_blank" rel="noopener noreferrer">
         View & Book <ExternalLink />
       </a>
     </Button>
@@ -1024,91 +1184,52 @@ function BookingLinkButton() {
 }
 
 function Flights() {
-  const [offline, setOffline] = useState(false);
-  const options = [
-    {
-      airline: "IndiGo",
-      times: "07:20 → 09:05",
-      duration: "1h 45m",
-      price: "₹8,400",
-      tag: "BEST BALANCE",
-      note: "Direct morning flight · preserves most of Day 1 · ₹1,600 cheaper than fastest option",
-    },
-    {
-      airline: "Air India Express",
-      times: "14:10 → 18:25",
-      duration: "4h 15m",
-      price: "₹7,620",
-      tag: "LOWEST PRICE",
-      note: "One short stop · saves ₹780 · evening arrival",
-    },
-    {
-      airline: "Vistara",
-      times: "10:30 → 13:40",
-      duration: "3h 10m",
-      price: "₹9,180",
-      tag: "MOST COMFORT",
-      note: "One stop · checked bag included · easy midday arrival",
-    },
-  ];
+  const { plan } = useTrip();
+  const options = plan?.flights ?? [];
   return (
     <>
       <SectionHeading
-        eyebrow="Indore to Goa"
+        eyebrow={`${plan?.trip.constraints.origin ?? "Origin"} to ${plan?.trip.constraints.destination ?? "destination"}`}
         title="Flights that fit your trip"
-        copy="Ranked for total price, useful arrival time and how much of Day 1 you keep."
-        action={
-          <Button onClick={() => setOffline(!offline)} variant="outline" className="rounded-full">
-            <RefreshCw />
-            Test status
-          </Button>
-        }
+        copy={`${plan?.sources.flights ?? "Demo"} provider options. Prices may change before external booking.`}
       />
-      {offline && (
-        <div className="mb-5 flex items-start gap-3 rounded-3xl border bg-peach/50 p-5">
-          <WifiOff />
-          <div>
-            <p className="font-bold">Flight search is temporarily unavailable</p>
-            <p className="text-sm text-muted-foreground">
-              Your hotel and itinerary results are still ready. These saved options remain visible.
-            </p>
-          </div>
-        </div>
+      {!options.length && (
+        <p className="rounded-3xl border bg-card p-6">
+          No flight options are available for this plan.
+        </p>
       )}
       <div className="space-y-4">
-        {options.map((option, index) => (
+        {options.map((option) => (
           <article
-            key={option.airline}
+            key={option.id}
             className="grid gap-5 rounded-[28px] border bg-card p-5 md:grid-cols-[170px_1fr_auto] md:items-center"
           >
             <div>
               <span className="rounded-full bg-lavender px-3 py-1 text-xs font-bold">
-                {option.tag}
+                {option.provider} data
               </span>
               <p className="mt-4 text-xl font-bold">{option.airline}</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                IDR → GOI · {index === 0 ? "Direct" : "1 stop"}
+                {option.departureAirport} → {option.arrivalAirport} ·{" "}
+                {option.stops === 0 ? "Direct" : `${option.stops} stop(s)`}
               </p>
             </div>
             <div>
-              <p className="text-2xl font-bold">{option.times}</p>
-              <p className="text-sm text-muted-foreground">{option.duration}</p>
+              <p className="text-2xl font-bold">
+                {formatTime(option.departureTime)} → {formatTime(option.arrivalTime)}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {formatDuration(option.durationMinutes)}
+              </p>
               <div className="mt-3 rounded-2xl bg-muted p-3 text-sm">
                 <Sparkles className="mr-2 inline size-4 text-primary" />
-                {option.note}
+                Retrieved {new Date(option.retrievedAt).toLocaleString()}; confirm details with the
+                provider.
               </div>
             </div>
             <div className="md:text-right">
-              <p className="text-2xl font-bold">{option.price}</p>
-              <p
-                className={cn(
-                  "mb-4 text-sm",
-                  index === 2 ? "text-primary" : "text-muted-foreground",
-                )}
-              >
-                {index === 2 ? "Price checked 38 min ago · refresh" : "Price checked 4 min ago"}
-              </p>
-              <BookingLinkButton />
+              <p className="text-2xl font-bold">₹{option.price.amount.toLocaleString("en-IN")}</p>
+              <BookingLinkButton url={option.bookingUrl} />
             </div>
           </article>
         ))}
@@ -1118,72 +1239,53 @@ function Flights() {
 }
 
 function Hotels() {
-  const hotels = [
-    {
-      name: "Casa Anjuna",
-      area: "Anjuna",
-      price: "₹8,250 total",
-      night: "₹1,650/night",
-      rating: "4.7",
-      reason:
-        "Best location for your itinerary — 14 minutes average travel time to planned activities.",
-    },
-    {
-      name: "The Heritage Panjim",
-      area: "Fontainhas",
-      price: "₹9,400 total",
-      night: "₹1,880/night",
-      rating: "4.6",
-      reason: "Walkable evenings and the easiest access to Panjim dining.",
-    },
-    {
-      name: "Candolim Garden House",
-      area: "Candolim",
-      price: "₹7,850 total",
-      night: "₹1,570/night",
-      rating: "4.5",
-      reason: "Best value near the beach, with breakfast and flexible cancellation.",
-    },
-  ];
+  const { plan } = useTrip();
+  const hotels = plan?.hotels ?? [];
   return (
     <>
       <SectionHeading
         eyebrow="Stay shortlist"
         title="A good base changes everything"
-        copy="Compared for price, quality and real travel time to your itinerary."
+        copy={`${plan?.sources.hotels ?? "Demo"} provider options. Check current prices before booking externally.`}
       />
+      {!hotels.length && (
+        <p className="rounded-3xl border bg-card p-6">
+          No hotel options are available for this plan.
+        </p>
+      )}
       <div className="grid gap-5 lg:grid-cols-3">
-        {hotels.map((hotel, index) => (
-          <article key={hotel.name} className="overflow-hidden rounded-[28px] border bg-card">
-            <img
-              src={index === 1 ? goaHero : hotelImage}
-              loading="lazy"
-              width={1200}
-              height={900}
-              alt={hotel.name}
-              className="aspect-[4/3] w-full object-cover"
+        {hotels.map((hotel) => (
+          <article key={hotel.id} className="overflow-hidden rounded-[28px] border bg-card">
+            <div
+              className="aspect-[4/3] bg-[radial-gradient(circle_at_25%_30%,var(--aqua),transparent_50%),linear-gradient(125deg,var(--sky),var(--butter))]"
+              aria-hidden="true"
             />
             <div className="p-5">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-bold text-primary">
-                  {index === 0 ? "BEST LOCATION" : index === 1 ? "CITY PICK" : "BEST VALUE"}
-                </p>
+                <p className="text-sm font-bold text-primary">{hotel.provider} data</p>
                 <span className="font-bold">
                   <Star className="mr-1 inline size-4 fill-current text-primary" />
-                  {hotel.rating}
+                  {hotel.rating ?? "Not rated"}
                 </span>
               </div>
               <h3 className="mt-2 text-xl font-bold">{hotel.name}</h3>
               <p className="text-sm text-muted-foreground">
-                {hotel.area} · Pool · Breakfast · Wi-Fi
+                {hotel.amenities.length ? hotel.amenities.join(" · ") : "Amenities not supplied"}
               </p>
-              <p className="mt-4 text-xl font-bold">{hotel.price}</p>
-              <p className="text-sm text-muted-foreground">{hotel.night}</p>
+              <p className="mt-4 text-xl font-bold">
+                ₹{hotel.totalPrice.amount.toLocaleString("en-IN")} total
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {hotel.nightlyPrice
+                  ? `₹${hotel.nightlyPrice.amount.toLocaleString("en-IN")}/night`
+                  : "Nightly price unavailable"}
+              </p>
               <div className="my-4 rounded-2xl bg-lavender/35 p-3 text-sm">
                 <Sparkles className="mr-2 inline size-4 text-primary" />
-                {hotel.reason}
+                Retrieved {new Date(hotel.retrievedAt).toLocaleString()}; confirm availability with
+                the provider.
               </div>
-              <BookingLinkButton />
+              <BookingLinkButton url={hotel.bookingUrl} />
             </div>
           </article>
         ))}
@@ -1197,35 +1299,39 @@ function MapView() {
   return (
     <>
       <SectionHeading
-        eyebrow="Live route"
+        eyebrow="Route overview"
         title="Your trip, spatially"
         copy="Select a stop on either side to keep the day and map in sync."
       />
       <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
         <div className="order-2 space-y-3 lg:order-1">
-          {stops.map((stop) => (
+          {trip.displayItinerary.map((stop, index) => (
             <button
               key={stop.id}
-              onClick={() => trip.setSelectedStop(stop.id)}
+              onClick={() => trip.setSelectedStopId(stop.id)}
               className={cn(
                 "flex w-full items-center gap-3 rounded-3xl border bg-card p-3 text-left",
-                trip.selectedStop === stop.id && "border-primary",
+                trip.selectedStopId === stop.id && "border-primary",
               )}
             >
               <span className="flex size-9 items-center justify-center rounded-full bg-primary font-bold text-primary-foreground">
-                {stop.id}
+                {index + 1}
               </span>
               <div>
                 <p className="font-bold">{stop.title}</p>
                 <p className="text-sm text-muted-foreground">
-                  {stop.time} · {stop.place}
+                  {formatTime(stop.startAt)} · {stop.category}
                 </p>
               </div>
             </button>
           ))}
         </div>
         <div className="order-1 lg:order-2">
-          <TripMap selected={trip.selectedStop} onSelect={trip.setSelectedStop} />
+          <TripMap
+            items={trip.displayItinerary}
+            selectedId={trip.selectedStopId}
+            onSelect={trip.setSelectedStopId}
+          />
         </div>
       </div>
     </>
@@ -1233,17 +1339,17 @@ function MapView() {
 }
 
 function Budget() {
-  const { plan } = useTrip();
-  const budget = plan?.budget;
-  const limit = plan?.trip.constraints.budget.amount ?? 30_000;
-  const total = budget?.total ?? 28_450;
-  const remaining = budget?.remaining ?? 1_550;
+  const { plan, displayBudget: budget } = useTrip();
+  if (!plan || !budget) return null;
+  const limit = plan.trip.constraints.budget.amount;
+  const total = budget.total;
+  const remaining = budget.remaining;
   const rows = [
-    { label: "Flights", amount: budget?.transport ?? 8_400, color: "bg-sky" },
-    { label: "Hotel", amount: budget?.hotel ?? 8_250, color: "bg-lavender" },
-    { label: "Food", amount: budget?.food ?? 5_400, color: "bg-butter" },
-    { label: "Activities", amount: budget?.activities ?? 2_900, color: "bg-aqua" },
-    { label: "Local travel", amount: budget?.localTransport ?? 3_500, color: "bg-peach" },
+    { label: "Flights", amount: budget.transport, color: "bg-sky" },
+    { label: "Hotel", amount: budget.hotel, color: "bg-lavender" },
+    { label: "Food estimate", amount: budget.food, color: "bg-butter" },
+    { label: "Activities", amount: budget.activities, color: "bg-aqua" },
+    { label: "Local travel estimate", amount: budget.localTransport, color: "bg-peach" },
   ].map((row) => ({
     ...row,
     value: `₹${row.amount.toLocaleString("en-IN")}`,
@@ -1254,7 +1360,11 @@ function Budget() {
       <SectionHeading
         eyebrow="Budget guardrail"
         title={`₹${total.toLocaleString("en-IN")} / ₹${limit.toLocaleString("en-IN")}`}
-        copy={`You still have ₹${remaining.toLocaleString("en-IN")} for the spontaneous bits.`}
+        copy={
+          remaining >= 0
+            ? `₹${remaining.toLocaleString("en-IN")} remains in your budget.`
+            : `Over budget by ₹${Math.abs(remaining).toLocaleString("en-IN")}.`
+        }
       />
       <div className="grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
         <section className="rounded-[28px] border bg-card p-6 md:p-8">
@@ -1262,7 +1372,12 @@ function Budget() {
             {rows.map((row) => (
               <div key={row.label} className={row.color} style={{ width: `${row.pct}%` }} />
             ))}
-            <div className="bg-muted" style={{ width: "5%" }} />
+            <div
+              className="bg-muted"
+              style={{
+                width: `${Math.max(0, 100 - rows.reduce((sum, row) => sum + row.pct, 0))}%`,
+              }}
+            />
           </div>
           <div className="mt-8 space-y-5">
             {rows.map((row) => (
@@ -1285,7 +1400,11 @@ function Budget() {
             <Sparkles className="text-primary" />
             <p className="mt-4 text-lg font-bold">TripPilot insight</p>
             <p className="mt-2 leading-7 text-muted-foreground">
-              Your hotel uses 29% of the budget, but your current trip still has a ₹1,550 buffer.
+              Your hotel uses {limit > 0 ? Math.round((budget.hotel / limit) * 100) : 0}% of the
+              budget.{" "}
+              {remaining >= 0
+                ? `You have ₹${remaining.toLocaleString("en-IN")} left.`
+                : "The current plan exceeds your budget."}
             </p>
           </div>
         </div>
@@ -1297,14 +1416,15 @@ function Budget() {
 function Alerts() {
   const trip = useTrip();
   const weatherAlerts = trip.plan?.weather?.alerts ?? [];
-  const freeWindow = trip.plan?.freeTimeWindows?.[0];
+  const freeWindow = trip.activeFreeTimeWindow;
   const alerts = [
     {
       icon: Plane,
       tone: "bg-peach/55",
-      title: "Your inbound flight may arrive 4h 05m late",
-      copy: "Lunch and Fort Aguada are affected. I can preserve the beach and dinner, then move the fort to Day 3.",
-      action: "Review new plan",
+      title: "Demo: simulate a flight delay",
+      copy: "Preview a sample disruption comparison. It does not monitor flights or change this itinerary.",
+      action: "Preview demo",
+      target: "demo",
     },
     ...weatherAlerts.map((alert) => ({
       icon: CloudSun,
@@ -1312,21 +1432,20 @@ function Alerts() {
       title: alert.headline,
       copy: [alert.severity, alert.areas].filter(Boolean).join(" · ") || "Weather provider alert",
       action: "View itinerary",
+      target: "itinerary",
     })),
-    ...(freeWindow ? [{
-      icon: Sparkles,
-      tone: "bg-butter/55",
-      title: `${Math.floor(freeWindow.durationMinutes / 60)}h ${freeWindow.durationMinutes % 60}m free time available`,
-      copy: "Route-aware nearby recommendations are ready to check.",
-      action: "Explore places",
-    }] : []),
-    {
-      icon: RefreshCw,
-      tone: "bg-muted",
-      title: "One flight price is getting stale",
-      copy: "The Vistara fare was checked 38 minutes ago. Refresh before booking externally.",
-      action: "View flights",
-    },
+    ...(freeWindow
+      ? [
+          {
+            icon: Sparkles,
+            tone: "bg-butter/55",
+            title: `${Math.floor(freeWindow.durationMinutes / 60)}h ${freeWindow.durationMinutes % 60}m free time available`,
+            copy: "Route-aware nearby recommendations are ready to check.",
+            action: "Explore places",
+            target: "explore",
+          },
+        ]
+      : []),
   ];
   return (
     <>
@@ -1336,7 +1455,7 @@ function Alerts() {
         copy="Every update explains what changes in the actual trip."
       />
       <div className="space-y-4">
-        {alerts.map(({ icon: Icon, tone, title, copy, action }, index) => (
+        {alerts.map(({ icon: Icon, tone, title, copy, action, target }, index) => (
           <article
             key={title}
             className={cn(
@@ -1354,9 +1473,9 @@ function Alerts() {
             <Button
               variant={index === 0 ? "default" : "outline"}
               onClick={() =>
-                index === 0
+                target === "demo"
                   ? trip.setDelayOpen(true)
-                  : trip.setView(index === 1 ? "itinerary" : index === 2 ? "explore" : "flights")
+                  : trip.setView(target === "explore" ? "explore" : "itinerary")
               }
               className="rounded-full"
             >
@@ -1411,12 +1530,12 @@ function ReplanComparison() {
               <AlertTriangle />
             </span>
             <div>
-              <p className="text-sm font-bold uppercase text-primary">Plans changed</p>
+              <p className="text-sm font-bold uppercase text-primary">Demo disruption preview</p>
               <h2 id="replan-title" className="mt-1 text-3xl font-bold">
-                Your flight is arriving 4h 05m later
+                Sample flight delay: 4h 05m
               </h2>
               <p id="replan-description" className="mt-2 text-muted-foreground">
-                I rebuilt Day 1 so you don’t have to start from scratch.
+                This example does not alter your actual trip.
               </p>
             </div>
           </div>
@@ -1432,11 +1551,17 @@ function ReplanComparison() {
           <ScheduleColumn
             title="ORIGINAL"
             faded
-            rows={["13:00  Lunch", "15:00  Fort Aguada", "18:00  Beach", "20:30  Dinner"]}
+            rows={trip.displayItinerary
+              .slice(0, 4)
+              .map((item) => `${formatTime(item.startAt)}  ${item.title}`)}
           />
           <ScheduleColumn
             title="UPDATED"
-            rows={["15:00  Late lunch", "Fort Aguada → Day 3", "17:30  Beach", "20:30  Dinner ✓"]}
+            rows={[
+              "Sample: arrival delayed",
+              "Affected stops need route and budget checks",
+              "A real revision would require your approval",
+            ]}
           />
         </div>
         <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -1447,8 +1572,8 @@ function ReplanComparison() {
           >
             Keep original
           </Button>
-          <Button onClick={trip.acceptReplan} className="rounded-full">
-            Use new plan <ArrowRight />
+          <Button onClick={() => trip.setDelayOpen(false)} className="rounded-full">
+            Close preview <ArrowRight />
           </Button>
         </div>
       </motion.section>

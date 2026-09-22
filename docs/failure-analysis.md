@@ -50,3 +50,31 @@
 - **Root cause:** the local npm runner did not execute the downloaded CLI correctly in this environment.
 - **Fix:** the standard timestamped migration layout was created directly; the SQL remains compatible with Supabase CLI migration commands.
 - **Regression:** CI should add a local database reset check once Docker-backed Supabase is available.
+
+## Unverified route duration entered recommendations
+
+- **Failure:** an absent route matrix leg was previously treated as a 15-minute journey; invalid Google duration text could become zero.
+- **Root cause:** fallback values were used where a provider had not supplied a valid duration.
+- **Fix:** route normalization rejects invalid duration, and Explorer skips candidates missing either required route leg.
+- **Regression:** Google Routes and Explorer feasibility tests cover missing and invalid legs.
+
+## Prototype copy outlived the backend
+
+- **Failure:** Explorer and Route Thread rendered fixed Goa recommendations and travel times even after the backend supplied different plan data.
+- **Root cause:** React views retained the original screen fixtures while API calls were added separately.
+- **Fix:** views now consume normalized plan and Explorer responses. The decorative map is labeled schematic.
+- **Regression:** backend demo smoke checks verify plan, free window, and Explorer output; browser automation is still pending on this host.
+
+## Snake-case payload typed as camel-case data
+
+- **Failure:** flight, hotel, place, and itinerary arrays were typed as frontend domain objects before normalization.
+- **Root cause:** the raw API response type reused frontend interfaces.
+- **Fix:** raw response shapes are separate, and shared normalizers convert nested fields before state reaches components.
+- **Regression:** strict TypeScript and the backend response tests pass; dedicated frontend normalizer tests remain future work.
+
+## Frontend API base URL
+
+- **Failure:** the browser could call the wrong API origin despite a configured environment variable.
+- **Root cause:** the client URL builder did not consistently use `VITE_TRIPPILOT_API_URL`.
+- **Fix:** planning and Explorer requests use one URL builder.
+- **Regression:** local API smoke check and frontend build pass; automated browser E2E remains pending.

@@ -28,6 +28,8 @@ def detect_free_windows(
     for index in range(len(ordered) - 1):
         current_item = ordered[index]
         next_item = ordered[index + 1]
+        if current_item.end_at.date() != next_item.start_at.date():
+            continue
         gap_seconds = (next_item.start_at - current_item.end_at).total_seconds()
         gap_minutes = int(gap_seconds / 60)
         if gap_minutes >= min_duration_minutes:
@@ -93,7 +95,9 @@ def get_category_visit_duration(place: PlaceCandidate) -> int:
     return place.suggested_visit_minutes or 60
 
 
-def is_open_for_visit(place: PlaceCandidate, start_at: datetime, duration_minutes: int) -> bool | None:
+def is_open_for_visit(
+    place: PlaceCandidate, start_at: datetime, duration_minutes: int
+) -> bool | None:
     """Return whether a known schedule covers the whole proposed visit; None means unknown."""
     hours = place.opening_hours
     if not hours or not hours.periods:
