@@ -7,7 +7,7 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 - **Frontend:** TanStack Start, React 19, TanStack Router, Tailwind CSS, and the existing shadcn-based design system. `src/lib/trip-api.ts` is the browser's only planning boundary.
 - **Backend:** FastAPI exposes versioned REST endpoints. API keys and provider credentials remain server-side.
 - **Agent:** LangGraph owns the stateful planning transition. It delegates factual retrieval to typed providers and correctness checks to deterministic services.
-- **Providers:** flights and hotels use deterministic Indore–Goa demo fixtures; Places, Routes, and Weather use demo or configured server-side live adapters.
+- **Providers:** default flights/hotels use deterministic Indore–Goa fixtures. `FLIGHTS_PROVIDER=amadeus` selects the Amadeus Self-Service OAuth/Flight Offers adapter; `HOTELS_PROVIDER=booking` selects the Booking.com Demand API v3.2 accommodation adapter. Both remain server-side and preserve bounded demo fallbacks.
 - **Places:** `PLACES_PROVIDER=demo` uses deterministic fixtures; `PLACES_PROVIDER=google` selects Places API (New) Text Search, Nearby Search, and Place Details through a focused server-side client. Google payloads are normalized before entering graph state.
 - **Routes:** `ROUTES_PROVIDER=google` uses Google Routes and matrix responses. Missing or invalid durations fail closed.
 - **Weather:** `WEATHER_PROVIDER=weatherapi` uses WeatherAPI. Forecasts beyond the 14-day horizon report `not_available_yet` without an API call.
@@ -19,10 +19,11 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 
 1. The existing trip prompt calls `POST /api/v1/trips/plan`.
 2. FastAPI builds a typed planning state and invokes the LangGraph workflow.
-3. Independent provider searches run concurrently. Flight and hotel searches remain demo-only.
+3. Independent provider searches run concurrently. Provider mode is recorded in the returned source status; unavailable credentialed providers fail explicitly instead of silently returning demo inventory.
 4. The planner creates itinerary candidates and runs schedule and budget validation.
 5. The validated `TripPlan` is persisted as an owned root trip, preferences, options, and itinerary before it is returned.
 6. Direct `/trips/{id}` navigation rehydrates the normalized plan. Explorer loads server state; Add to Today rechecks version, window, route, schedule and budget before an atomic security-invoker mutation increments the version.
+7. Flight and hotel choices are explicit. `set_trip_selection` validates the owned stored option and expected trip version atomically; an optional user-entered final price applies only to a confirmed external booking and never includes payment data.
 
 ```text
 React / TanStack Query

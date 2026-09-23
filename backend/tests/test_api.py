@@ -24,6 +24,12 @@ def test_health() -> None:
     assert "providers" in response.json()
 
 
+def test_readiness_is_configuration_only() -> None:
+    response = client.get("/api/v1/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
 def test_unauthenticated_requests_fail() -> None:
     response = client.post(
         "/api/v1/trips/plan",
@@ -53,11 +59,9 @@ def test_demo_plan_is_grounded_and_reconciled() -> None:
     assert len(body["hotels"]) == 3
 
 
-def test_progress_stream_never_exposes_reasoning() -> None:
+def test_canned_progress_stream_is_not_exposed() -> None:
     response = client.get("/api/v1/trips/plan/events")
-    assert response.status_code == 200
-    assert "constraints.parsed" in response.text
-    assert "chain-of-thought" not in response.text.lower()
+    assert response.status_code == 404
 
 
 def test_graph_plans_with_extracted_constraints(monkeypatch) -> None:
@@ -245,3 +249,44 @@ def test_explorer_rejects_a_client_invented_window() -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"]["category"] == "INVALID_WINDOW"
+
+
+def test_selection_is_versioned_and_confirmation_reprices_budget() -> None:
+    created = client.post(
+        "/api/v1/trips/plan",
+        headers=USER_A_AUTH,
+        json={"prompt": "Goa for five days from Indore for two people under 30000"},
+    ).json()
+    trip_id = created["trip"]["id"]
+    chosen = created["flights"][1]
+    selection = client.post(
+        f"/api/v1/trips/{trip_id}/selections",
+        headers=USER_A_AUTH,
+        json={
+            "option_id": chosen["id"],
+            "selection_type": "selected_flight",
+            "expected_trip_version": 1,
+        },
+    )
+    assert selection.status_code == 200
+    selected = selection.json()
+    assert selected["trip"]["version"] == 2
+    assert selected["budget"]["transport"] == chosen["price"]["amount"]
+
+    confirmed = client.post(
+        f"/api/v1/trips/{trip_id}/selections",
+        headers=USER_A_AUTH,
+        json={
+            "option_id": chosen["id"],
+            "selection_type": "confirmed_flight",
+            "expected_trip_version": 2,
+            "confirmed_final_price": {"amount": 7900, "currency": "INR"},
+            "booking_reference": "AIRLINE-REFERENCE-ONLY",
+        },
+    )
+    assert confirmed.status_code == 200
+    confirmed_plan = confirmed.json()
+    assert confirmed_plan["budget"]["transport"] == 7900
+    assert any(
+        item["selection_type"] == "confirmed_flight" for item in confirmed_plan["selections"]
+    )

@@ -13,6 +13,15 @@ class Settings(BaseSettings):
     places_provider: Literal["demo", "google"] = "demo"
     routes_provider: Literal["demo", "google"] = "demo"
     weather_provider: Literal["demo", "weatherapi"] = "demo"
+    flights_provider: Literal["demo", "amadeus"] = "demo"
+    hotels_provider: Literal["demo", "booking"] = "demo"
+    amadeus_env: Literal["test", "production"] = "test"
+    amadeus_client_id: str | None = None
+    amadeus_client_secret: str | None = None
+    booking_env: Literal["sandbox", "production"] = "sandbox"
+    booking_api_token: str | None = None
+    booking_affiliate_id: str | None = None
+    booking_booker_country: str = "in"
     routes_travel_mode: str = "DRIVE"
     routes_routing_preference: str = "TRAFFIC_UNAWARE"
     allowed_origins: str = "http://localhost:8080,http://localhost:3000"
@@ -24,6 +33,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     google_maps_api_key: str | None = None
     weather_api_key: str | None = None
+    git_commit_sha: str | None = None
     request_timeout_seconds: float = Field(default=12, ge=1, le=60)
     provider_max_retries: int = Field(default=2, ge=0, le=2)
 

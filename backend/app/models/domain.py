@@ -76,6 +76,13 @@ class FlightOption(BaseModel):
     retrieved_at: datetime
 
 
+class AirportLocation(BaseModel):
+    code: str = Field(min_length=3, max_length=3)
+    name: str
+    city_name: str | None = None
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+
+
 class HotelOption(BaseModel):
     id: str
     name: str
@@ -272,6 +279,14 @@ class BudgetBreakdown(BaseModel):
     within_budget: bool
 
 
+class UserSelection(BaseModel):
+    option_id: str
+    selection_type: str
+    confirmed_price: Money | None = None
+    reference: str | None = Field(default=None, max_length=200)
+    confirmed_at: datetime | None = None
+
+
 class TripPlan(BaseModel):
     trip: Trip
     flights: list[FlightOption]
@@ -283,6 +298,7 @@ class TripPlan(BaseModel):
     weather: WeatherForecast | None = None
     free_time_windows: list[TimeWindow] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    selections: list[UserSelection] = Field(default_factory=list)
 
 
 class PlanningRequest(BaseModel):

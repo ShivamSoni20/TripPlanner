@@ -2,6 +2,7 @@ import math
 from datetime import UTC, date, datetime, time
 
 from app.models.domain import (
+    AirportLocation,
     DailyWeather,
     FlightOption,
     GeoPoint,
@@ -21,6 +22,24 @@ def _at(day, hour: int, minute: int = 0) -> datetime:
 
 
 class DemoFlightProvider:
+    async def resolve_location(self, query: str) -> list[AirportLocation]:
+        locations = {
+            "indore": AirportLocation(
+                code="IDR",
+                name="Devi Ahilyabai Holkar Airport",
+                city_name="Indore",
+                country_code="IN",
+            ),
+            "goa": AirportLocation(
+                code="GOI",
+                name="Goa International Airport",
+                city_name="Goa",
+                country_code="IN",
+            ),
+        }
+        match = locations.get(query.strip().lower())
+        return [match] if match else []
+
     async def search(self, request: TripConstraints) -> list[FlightOption]:
         if (
             request.destination.strip().lower() != "goa"

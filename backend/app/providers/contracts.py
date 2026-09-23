@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from app.models.domain import (
+    AirportLocation,
     FlightOption,
     GeoPoint,
     HotelOption,
@@ -15,6 +16,8 @@ from app.models.domain import (
 
 class FlightProvider(Protocol):
     async def search(self, request: TripConstraints) -> list[FlightOption]: ...
+
+    async def resolve_location(self, query: str) -> list[AirportLocation]: ...
 
 
 class HotelProvider(Protocol):

@@ -54,6 +54,7 @@ import {
   getTrip,
   listTrips,
   removeAddedItineraryItem,
+  selectTripOption,
   type TripPlanResponse,
 } from "@/lib/trip-api";
 import {
@@ -102,6 +103,10 @@ type TripContextValue = {
   tripLoadError: string | null;
   delayOpen: boolean;
   setDelayOpen: (value: boolean) => void;
+  selectOption: (
+    optionId: string,
+    selectionType: "selected_flight" | "selected_hotel",
+  ) => Promise<void>;
 };
 
 const TripContext = createContext<TripContextValue | null>(null);
@@ -237,6 +242,25 @@ export function TripProvider({ children }: { children: ReactNode }) {
       setAddingPlace(false);
     }
   };
+  const selectOption = async (
+    optionId: string,
+    selectionType: "selected_flight" | "selected_hotel",
+  ) => {
+    if (!plan) return;
+    try {
+      const updated = await selectTripOption(
+        plan.trip.id,
+        optionId,
+        selectionType,
+        plan.trip.version,
+      );
+      setPlan(updated);
+      queryClient.setQueryData(["trip", auth.user?.id, plan.trip.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["trips", auth.user?.id] });
+    } catch (error) {
+      setPlanningError(error instanceof Error ? error.message : "Could not save selection");
+    }
+  };
   const value: TripContextValue = {
     stage,
     setStage,
@@ -264,6 +288,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
       : null,
     delayOpen,
     setDelayOpen,
+    selectOption,
   };
   return (
     <TripContext.Provider value={value}>
@@ -437,13 +462,6 @@ export function TripPrompt() {
   );
 }
 
-const planningSteps = [
-  "Understanding your constraints",
-  "Querying configured travel providers",
-  "Building a feasible itinerary",
-  "Validating schedule and budget",
-];
-
 export function AgentProgress() {
   const { planningError, setStage } = useTrip();
   return (
@@ -458,33 +476,16 @@ export function AgentProgress() {
           </div>
           <h1 className="text-4xl font-bold leading-tight sm:text-5xl">Planning your adventure</h1>
           <p className="mt-4 text-lg text-muted-foreground">
-            Connecting the details so every day flows naturally.
+            Your request is running. TripPilot will show the finished plan once the configured
+            providers and deterministic checks return.
           </p>
           <div className="mt-10 space-y-3">
-            {planningSteps.map((label, index) => (
-              <motion.div
-                initial={{ opacity: 0, x: -12 }}
-                animate={{ opacity: index === 0 ? 1 : 0.42, x: 0 }}
-                key={label}
-                className="flex items-center gap-4 rounded-2xl border bg-card px-4 py-3"
-              >
-                <span
-                  className={cn(
-                    "flex size-7 items-center justify-center rounded-full",
-                    index === 0 ? "bg-primary text-primary-foreground" : "bg-muted",
-                  )}
-                >
-                  {index === 0 ? (
-                    <span className="size-2 animate-pulse rounded-full bg-primary-foreground" />
-                  ) : (
-                    <span className="size-2 rounded-full border" />
-                  )}
-                </span>
-                <div>
-                  <p className="font-semibold">{label}</p>
-                </div>
-              </motion.div>
-            ))}
+            <div className="flex items-center gap-4 rounded-2xl border bg-card px-4 py-3">
+              <span className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <span className="size-2 animate-pulse rounded-full bg-primary-foreground" />
+              </span>
+              <p className="font-semibold">Waiting for the planning response</p>
+            </div>
             {planningError && (
               <div
                 role="alert"
@@ -1305,7 +1306,7 @@ function TripMap({
       ))}
       <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between rounded-2xl border bg-card/95 p-3 text-sm">
         <span className="flex items-center gap-2">
-          <LocateFixed className="size-4 text-primary" /> Schematic only
+          <LocateFixed className="size-4 text-primary" /> Map preview unavailable
         </span>
         <span className="font-bold">See itinerary for travel times</span>
       </div>
@@ -1326,7 +1327,7 @@ function BookingLinkButton({ url }: { url: string | undefined }) {
 }
 
 function Flights() {
-  const { plan } = useTrip();
+  const { plan, selectOption } = useTrip();
   const options = plan?.flights ?? [];
   return (
     <>
@@ -1372,6 +1373,21 @@ function Flights() {
             <div className="md:text-right">
               <p className="text-2xl font-bold">₹{option.price.amount.toLocaleString("en-IN")}</p>
               <BookingLinkButton url={option.bookingUrl} />
+              <Button
+                className="mt-2 rounded-full"
+                variant={
+                  plan?.selections.some(
+                    (selection) =>
+                      selection.optionId === option.id &&
+                      selection.selectionType === "selected_flight",
+                  )
+                    ? "secondary"
+                    : "outline"
+                }
+                onClick={() => void selectOption(option.id, "selected_flight")}
+              >
+                Select this flight
+              </Button>
             </div>
           </article>
         ))}
@@ -1381,7 +1397,7 @@ function Flights() {
 }
 
 function Hotels() {
-  const { plan } = useTrip();
+  const { plan, selectOption } = useTrip();
   const hotels = plan?.hotels ?? [];
   return (
     <>
@@ -1428,6 +1444,21 @@ function Hotels() {
                 the provider.
               </div>
               <BookingLinkButton url={hotel.bookingUrl} />
+              <Button
+                className="mt-2 w-full rounded-full"
+                variant={
+                  plan?.selections.some(
+                    (selection) =>
+                      selection.optionId === hotel.id &&
+                      selection.selectionType === "selected_hotel",
+                  )
+                    ? "secondary"
+                    : "outline"
+                }
+                onClick={() => void selectOption(hotel.id, "selected_hotel")}
+              >
+                Select this stay
+              </Button>
             </div>
           </article>
         ))}

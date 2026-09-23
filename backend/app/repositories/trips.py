@@ -20,6 +20,7 @@ from app.models.domain import (
     TripPlan,
     TripPreferences,
     TripStatus,
+    UserSelection,
     WeatherForecast,
 )
 from app.services.free_time import detect_free_windows
@@ -65,8 +66,6 @@ class TripRepository:
                 "plan_metadata": {
                     "food": plan.budget.food,
                     "local_transport": plan.budget.local_transport,
-                    "selected_flight_id": plan.flights[0].id if plan.flights else None,
-                    "selected_hotel_id": plan.hotels[0].id if plan.hotels else None,
                     "sources": plan.sources.model_dump(mode="json"),
                     "weather": plan.weather.model_dump(mode="json") if plan.weather else None,
                     "warnings": plan.warnings,
@@ -247,16 +246,74 @@ class TripRepository:
         total_budget = int(trip_row["budget"])
         activities_cost = sum(int(item.cost.amount) for item in itinerary)
         metadata = trip_row.get("plan_metadata") or {}
+        selections_res = (
+            self.db.table("user_selections").select("*").eq("trip_id", trip_id).execute()
+        )
+        options_by_uuid = {str(opt["id"]): opt for opt in options_res.data}
+        selections: list[UserSelection] = []
+        for selection in selections_res.data:
+            option = options_by_uuid.get(str(selection.get("option_id")))
+            if not option:
+                continue
+            payload = selection.get("payload") or {}
+            price = payload.get("confirmed_price")
+            selections.append(
+                UserSelection(
+                    option_id=option["provider_id"],
+                    selection_type=selection["selection_type"],
+                    confirmed_price=Money.model_validate(price) if price else None,
+                    reference=payload.get("reference"),
+                    confirmed_at=parse_datetime(selection["created_at"]),
+                )
+            )
+
+        selection_by_type = {selection.selection_type: selection for selection in selections}
+        selected_hotel_id = selection_by_type.get("confirmed_hotel") or selection_by_type.get(
+            "selected_hotel"
+        )
+        selected_flight_id = selection_by_type.get("confirmed_flight") or selection_by_type.get(
+            "selected_flight"
+        )
+        selected_hotel_id = selected_hotel_id.option_id if selected_hotel_id else None
+        selected_flight_id = selected_flight_id.option_id if selected_flight_id else None
         selected_hotel = next(
-            (h for h in hotels if h.id == metadata.get("selected_hotel_id")),
+            (hotel for hotel in hotels if hotel.id == selected_hotel_id),
             hotels[0] if hotels else None,
         )
         selected_flight = next(
-            (f for f in flights if f.id == metadata.get("selected_flight_id")),
+            (flight for flight in flights if flight.id == selected_flight_id),
             flights[0] if flights else None,
         )
-        hotel_cost = selected_hotel.total_price.amount if selected_hotel else 0
-        flight_cost = selected_flight.price.amount if selected_flight else 0
+        confirmed_hotel = next(
+            (
+                selection
+                for selection in selections
+                if selection.selection_type == "confirmed_hotel"
+            ),
+            None,
+        )
+        confirmed_flight = next(
+            (
+                selection
+                for selection in selections
+                if selection.selection_type == "confirmed_flight"
+            ),
+            None,
+        )
+        hotel_cost = (
+            confirmed_hotel.confirmed_price.amount
+            if confirmed_hotel and confirmed_hotel.confirmed_price
+            else selected_hotel.total_price.amount
+            if selected_hotel
+            else 0
+        )
+        flight_cost = (
+            confirmed_flight.confirmed_price.amount
+            if confirmed_flight and confirmed_flight.confirmed_price
+            else selected_flight.price.amount
+            if selected_flight
+            else 0
+        )
         days_count = (constraints.end_date - constraints.start_date).days
         food_cost = metadata.get("food", 540 * constraints.travelers * days_count)
         local_transport = metadata.get("local_transport", 350 * constraints.travelers * days_count)
@@ -290,6 +347,7 @@ class TripRepository:
             else None,
             free_time_windows=free_windows,
             warnings=metadata.get("warnings", []),
+            selections=selections,
         )
 
     async def list_trips(self) -> list[dict]:
@@ -380,6 +438,38 @@ class TripRepository:
                 },
             ) from exc
 
+        return await self.get_trip(trip_id)
+
+    async def set_selection(
+        self,
+        trip_id: str,
+        option_id: str,
+        selection_type: str,
+        expected_version: int,
+        payload: dict,
+    ) -> TripPlan:
+        try:
+            self.db.rpc(
+                "set_trip_selection",
+                {
+                    "p_trip_id": trip_id,
+                    "p_provider_option_id": option_id,
+                    "p_selection_type": selection_type,
+                    "p_expected_version": expected_version,
+                    "p_payload": payload,
+                },
+            ).execute()
+        except Exception as error:
+            message = str(error)
+            if "STALE_TRIP_STATE" in message:
+                raise HTTPException(
+                    status_code=409, detail={"category": "STALE_TRIP_STATE"}
+                ) from error
+            if "OPTION_NOT_FOUND" in message:
+                raise HTTPException(status_code=404, detail={"category": "NOT_FOUND"}) from error
+            raise HTTPException(
+                status_code=500, detail={"category": "PERSISTENCE_FAILED"}
+            ) from error
         return await self.get_trip(trip_id)
 
 
@@ -496,3 +586,100 @@ class InMemoryTripRepository:
         new_plan.trip.updated_at = datetime.now(UTC)
         self.storage[trip_id] = (self.user_id, new_plan)
         return new_plan
+
+    async def set_selection(
+        self,
+        trip_id: str,
+        option_id: str,
+        selection_type: str,
+        expected_version: int,
+        payload: dict,
+    ) -> TripPlan:
+        plan = await self.get_trip(trip_id)
+        if plan.trip.version != expected_version:
+            raise HTTPException(status_code=409, detail={"category": "STALE_TRIP_STATE"})
+        options = plan.flights if selection_type.endswith("flight") else plan.hotels
+        if not any(option.id == option_id for option in options):
+            raise HTTPException(status_code=404, detail={"category": "NOT_FOUND"})
+        next_plan = plan.model_copy(deep=True)
+        next_plan.selections = [
+            item for item in next_plan.selections if item.selection_type != selection_type
+        ]
+        next_plan.selections.append(
+            UserSelection(
+                option_id=option_id,
+                selection_type=selection_type,
+                confirmed_price=Money.model_validate(payload["confirmed_price"])
+                if payload.get("confirmed_price")
+                else None,
+                reference=payload.get("reference"),
+                confirmed_at=datetime.now(UTC),
+            )
+        )
+        flight = next(
+            (
+                selection
+                for selection in next_plan.selections
+                if selection.selection_type == "confirmed_flight"
+            ),
+            next(
+                (
+                    selection
+                    for selection in next_plan.selections
+                    if selection.selection_type == "selected_flight"
+                ),
+                None,
+            ),
+        )
+        hotel = next(
+            (
+                selection
+                for selection in next_plan.selections
+                if selection.selection_type == "confirmed_hotel"
+            ),
+            next(
+                (
+                    selection
+                    for selection in next_plan.selections
+                    if selection.selection_type == "selected_hotel"
+                ),
+                None,
+            ),
+        )
+        selected_flight = next(
+            (item for item in next_plan.flights if flight and item.id == flight.option_id),
+            None,
+        )
+        selected_hotel = next(
+            (item for item in next_plan.hotels if hotel and item.id == hotel.option_id),
+            None,
+        )
+        next_plan.budget.transport = (
+            flight.confirmed_price.amount
+            if flight and flight.confirmed_price
+            else selected_flight.price.amount
+            if selected_flight
+            else next_plan.budget.transport
+        )
+        next_plan.budget.hotel = (
+            hotel.confirmed_price.amount
+            if hotel and hotel.confirmed_price
+            else selected_hotel.total_price.amount
+            if selected_hotel
+            else next_plan.budget.hotel
+        )
+        next_plan.budget.total = (
+            next_plan.budget.transport
+            + next_plan.budget.hotel
+            + next_plan.budget.food
+            + next_plan.budget.local_transport
+            + next_plan.budget.activities
+        )
+        next_plan.budget.remaining = (
+            next_plan.trip.constraints.budget.amount - next_plan.budget.total
+        )
+        next_plan.budget.within_budget = next_plan.budget.remaining >= 0
+        next_plan.trip.version += 1
+        next_plan.trip.updated_at = datetime.now(UTC)
+        self.storage[trip_id] = (self.user_id, next_plan)
+        return next_plan

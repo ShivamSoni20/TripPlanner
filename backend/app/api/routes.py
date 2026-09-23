@@ -1,10 +1,7 @@
-import json
-from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from supabase import Client
 
@@ -22,6 +19,8 @@ from app.models.domain import (
     TimeWindow,
     TripPlan,
 )
+from app.providers.amadeus import AmadeusClient, AmadeusFlightProvider
+from app.providers.booking import BookingDemandClient, BookingHotelProvider
 from app.providers.demo import (
     DemoFlightProvider,
     DemoHotelProvider,
@@ -64,6 +63,28 @@ class AddItineraryItemRequest(BaseModel):
     window: TimeWindow
     expected_trip_version: int = Field(ge=1)
     interests: list[str] = Field(default_factory=list)
+
+
+class SelectionRequest(BaseModel):
+    option_id: str = Field(min_length=1, max_length=255)
+    selection_type: str
+    expected_trip_version: int = Field(ge=1)
+    confirmed_final_price: Money | None = None
+    booking_reference: str | None = Field(default=None, max_length=200)
+
+    def validate_selection(self) -> None:
+        allowed = {
+            "selected_flight",
+            "selected_hotel",
+            "confirmed_flight",
+            "confirmed_hotel",
+        }
+        if self.selection_type not in allowed:
+            raise HTTPException(status_code=422, detail={"category": "INVALID_SELECTION_TYPE"})
+        if self.selection_type.startswith("confirmed_") is False and (
+            self.confirmed_final_price or self.booking_reference
+        ):
+            raise HTTPException(status_code=422, detail={"category": "INVALID_SELECTION_PAYLOAD"})
 
 
 def get_weather_provider():
@@ -130,6 +151,55 @@ def get_planner() -> TripPlanner:
     else:
         routes = DemoRoutesProvider()
 
+    if settings.flights_provider == "amadeus":
+        if not settings.amadeus_client_id or not settings.amadeus_client_secret:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": (
+                        "AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET are required "
+                        "when FLIGHTS_PROVIDER=amadeus"
+                    ),
+                },
+            )
+        flights = AmadeusFlightProvider(
+            AmadeusClient(
+                client_id=settings.amadeus_client_id,
+                client_secret=settings.amadeus_client_secret,
+                environment=settings.amadeus_env,
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+            )
+        )
+    else:
+        flights = DemoFlightProvider()
+
+    if settings.hotels_provider == "booking":
+        if not settings.booking_api_token or not settings.booking_affiliate_id:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": (
+                        "BOOKING_API_TOKEN and BOOKING_AFFILIATE_ID are required "
+                        "when HOTELS_PROVIDER=booking"
+                    ),
+                },
+            )
+        hotels = BookingHotelProvider(
+            BookingDemandClient(
+                api_token=settings.booking_api_token,
+                affiliate_id=settings.booking_affiliate_id,
+                environment=settings.booking_env,
+                timeout_seconds=settings.request_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+            ),
+            booker_country=settings.booking_booker_country,
+        )
+    else:
+        hotels = DemoHotelProvider()
+
     model_status = "live" if settings.travel_data_mode == "live" else "demo"
     data_mode = (
         "mixed"
@@ -138,14 +208,16 @@ def get_planner() -> TripPlanner:
             or settings.places_provider == "google"
             or settings.routes_provider == "google"
             or settings.weather_provider == "weatherapi"
+            or settings.flights_provider == "amadeus"
+            or settings.hotels_provider == "booking"
         )
         else "demo"
     )
 
     sources = DataSourceStatus(
         model=model_status,
-        flights="demo",
-        hotels="demo",
+        flights="live" if settings.flights_provider == "amadeus" else "demo",
+        hotels="live" if settings.hotels_provider == "booking" else "demo",
         places=settings.places_provider,
         routes=settings.routes_provider,
         weather="unavailable",
@@ -154,8 +226,8 @@ def get_planner() -> TripPlanner:
     weather = get_weather_provider()
     sources.weather = settings.weather_provider
     return TripPlanner(
-        DemoFlightProvider(),
-        DemoHotelProvider(),
+        flights,
+        hotels,
         places,
         routes,
         weather,
@@ -205,10 +277,43 @@ async def health_check():
             "model": "live" if settings.travel_data_mode == "live" else "demo",
             "places": settings.places_provider,
             "routes": settings.routes_provider,
-            "flights": "demo",
-            "hotels": "demo",
+            "flights": settings.flights_provider,
+            "hotels": settings.hotels_provider,
             "weather": settings.weather_provider,
         },
+    }
+
+
+@router.get("/ready")
+async def readiness_check():
+    """Low-cost configuration readiness; never probes billable travel providers."""
+    settings = get_settings()
+    problems: list[str] = []
+    if settings.app_env != "test" and not (
+        settings.supabase_url and settings.supabase_publishable_key
+    ):
+        problems.append("Supabase configuration is missing")
+    if settings.travel_data_mode == "live" and not settings.openrouter_api_key:
+        problems.append("OPENROUTER_API_KEY is required in live mode")
+    if settings.flights_provider == "amadeus" and not (
+        settings.amadeus_client_id and settings.amadeus_client_secret
+    ):
+        problems.append("Amadeus credentials are missing")
+    if settings.hotels_provider == "booking" and not (
+        settings.booking_api_token and settings.booking_affiliate_id
+    ):
+        problems.append("Booking credentials are missing")
+    return {
+        "status": "ready" if not problems else "not_ready",
+        "problems": problems,
+        "providers": {
+            "flights": settings.flights_provider,
+            "hotels": settings.hotels_provider,
+            "places": settings.places_provider,
+            "routes": settings.routes_provider,
+            "weather": settings.weather_provider,
+        },
+        "version": settings.git_commit_sha or "local",
     }
 
 
@@ -439,6 +544,28 @@ async def delete_itinerary_item(
     )
 
 
+@router.post("/trips/{trip_id}/selections", response_model=TripPlan)
+async def select_trip_option(
+    trip_id: str,
+    request: SelectionRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    db_client: Annotated[Client | None, Depends(get_user_db_client)] = None,
+):
+    request.validate_selection()
+    payload: dict[str, object] = {}
+    if request.confirmed_final_price:
+        payload["confirmed_price"] = request.confirmed_final_price.model_dump(mode="json")
+    if request.booking_reference:
+        payload["reference"] = request.booking_reference
+    return await get_repository(user, db_client).set_selection(
+        trip_id=trip_id,
+        option_id=request.option_id,
+        selection_type=request.selection_type,
+        expected_version=request.expected_trip_version,
+        payload=payload,
+    )
+
+
 # Keep legacy stateless explore endpoint for backward compatibility
 @router.post("/trips/explore", response_model=list[PlaceRecommendation])
 async def explore_places(request: ExploreRequest):
@@ -456,23 +583,3 @@ async def explore_places(request: ExploreRequest):
             status_code=503,
             detail={"category": error.category.value, "message": str(error)},
         ) from error
-
-
-async def planning_events() -> AsyncIterator[str]:
-    events = [
-        ("constraints.parsed", {}),
-        ("flights.completed", {}),
-        ("hotels.completed", {}),
-        ("places.completed", {}),
-        ("routes.completed", {}),
-        ("itinerary.optimizing", {}),
-        ("budget.validated", {}),
-        ("plan.completed", {}),
-    ]
-    for event, data in events:
-        yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-@router.get("/trips/plan/events")
-async def stream_plan_events() -> StreamingResponse:
-    return StreamingResponse(planning_events(), media_type="text/event-stream")

@@ -4,7 +4,7 @@ TripPilot is a stateful AI travel operating system. A traveler describes a goal 
 
 The repository preserves the original Sunlit Cartography + Soft Bento interface while adding a typed FastAPI/LangGraph backend, provider boundaries, deterministic validation, a Supabase schema, tests, and CI.
 
-> Default provider status: **demo mode**. Flight and hotel inventory remains deterministic demo data for the Indore–Goa fixture only. Places, routes, and weather have server-side live adapters when configured. No provider key is shipped in this repository.
+> Default provider status: **demo mode**. Flight and hotel inventory remains deterministic demo data for the Indore–Goa fixture only. Amadeus Self-Service and Booking.com Demand API v3.2 adapters are available behind explicit server-only credentials but have not been live-verified here. Places, routes, and weather also have server-side live adapters when configured. No provider key is shipped in this repository.
 
 ## What works
 
@@ -13,6 +13,8 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 - OpenRouter strict structured extraction in live mode, including one bounded validation retry
 - Structured follow-up questions when critical trip fields are missing
 - Concurrent typed flight, hotel, and place providers
+- Amadeus Flight Offers adapter with OAuth token caching, provider-backed airport/city resolution, normalized offers, and no invented booking links
+- Booking.com Demand API v3.2 accommodation adapter with location resolution, bounded inventory, server-only auth headers, and provider-returned redirect validation
 - Google Places API (New) adapter for destination, nearby, and details lookup
 - Google Routes adapter for route and matrix duration checks; missing routes are never treated as a guessed duration
 - WeatherAPI adapter with normalized daily/hourly forecasts and alerts; dates 14 or more days ahead return `not_available_yet`
@@ -25,6 +27,8 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 - Shared frontend plan state and recoverable backend error UI
 - Responsive existing views for trip, explorer, inventory, map, budget, alerts, and re-planning
 - Supabase ownership RLS migration, request-scoped user JWT Data API access, and atomic add/undo functions
+- Explicit, versioned flight/hotel selection and optional external-booking confirmation; no payment credentials are collected
+- Cheap `/api/v1/ready` configuration readiness endpoint and no canned planning SSE/progress events
 - Backend unit/API tests and frontend/backend CI
 
 ## Architecture
@@ -91,7 +95,7 @@ The backend suite contains correctness and API tests. See [evaluation](docs/eval
 
 ## Database
 
-Apply both migrations under `supabase/migrations/` in order. Phase E fixes `mixed` data mode, adds ownership/version/source metadata, authenticated grants, RLS policies, and security-invoker atomic add/undo functions. It stops if existing trips have a null owner; assign those owners safely before retrying. The local environment has no TripPilot Supabase project or credentials, so these SQL changes have not been applied or live-tested here.
+Apply all migrations under `supabase/migrations/` in order. The Phase F migration adds bounded selection types, an event dedupe key, and a security-invoker `set_trip_selection` RPC. It stops neither existing data nor RLS; it does require applying to a real Supabase project before selection persistence can be live-tested. The local environment has no TripPilot Supabase project or credentials, so these SQL changes have not been applied or live-tested here.
 
 ## Deployment
 
@@ -104,7 +108,7 @@ Apply both migrations under `supabase/migrations/` in order. Phase E fixes `mixe
 
 - Demo mode intentionally maps requests to the deterministic Goa evaluation fixture; live mode uses OpenRouter extraction.
 - Google Places and Routes require `GOOGLE_MAPS_API_KEY`; WeatherAPI requires `WEATHER_API_KEY`. Live calls have not been verified on this host because those keys are unavailable.
-- Flights and hotels remain demo providers; for other origins/destinations they return no fixture inventory.
+- Amadeus and Booking adapters are implemented and mock-tested but live/sandbox verification is blocked on credentials and partner access.
 - The map is an explicitly schematic visual, not geographic rendering.
 - The authenticated persistence code and RLS migration are implemented but live Supabase sign-in, two-user RLS, and browser reload flows could not be verified without a TripPilot project and credentials. Fake-repository tests are not live RLS proof.
 - The disruption view is a demo preview, not a persisted re-plan. Full evaluations and browser end-to-end tests remain incomplete.

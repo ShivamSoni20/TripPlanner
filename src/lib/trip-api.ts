@@ -14,6 +14,7 @@ import {
   TimeWindow,
   Trip,
   TripPlan,
+  UserSelection,
   WeatherAssessment,
   WeatherForecast,
 } from "../domain/trip";
@@ -239,6 +240,13 @@ interface ApiTripPlanResponse {
   weather?: ApiWeather | null;
   free_time_windows?: ApiTimeWindow[];
   warnings: string[];
+  selections?: Array<{
+    option_id: string;
+    selection_type: UserSelection["selectionType"];
+    confirmed_price?: ApiMoney | null;
+    reference?: string | null;
+    confirmed_at?: string | null;
+  }>;
 }
 
 function money(v: ApiMoney): Money {
@@ -447,6 +455,13 @@ function normalizePlan(p: ApiTripPlanResponse): TripPlan {
     },
     sources: normalizeDataSourceStatus(p.sources),
     warnings: p.warnings,
+    selections: (p.selections ?? []).map((selection) => ({
+      optionId: selection.option_id,
+      selectionType: selection.selection_type,
+      ...(selection.confirmed_price ? { confirmedPrice: money(selection.confirmed_price) } : {}),
+      ...(selection.reference ? { reference: selection.reference } : {}),
+      ...(selection.confirmed_at ? { confirmedAt: selection.confirmed_at } : {}),
+    })),
     freeTimeWindows: (p.free_time_windows ?? []).map((x) => ({
       startAt: x.start_at,
       endAt: x.end_at,
@@ -659,6 +674,32 @@ export async function removeAddedItineraryItem(
   if (!r.ok) throw new Error("Remove item failed");
   const payload: ApiTripPlanResponse = await r.json();
   return normalizePlan(payload);
+}
+
+export async function selectTripOption(
+  tripId: string,
+  optionId: string,
+  selectionType: UserSelection["selectionType"],
+  expectedVersion: number,
+  confirmedFinalPrice?: Money,
+  bookingReference?: string,
+): Promise<TripPlan> {
+  const r = await authorizedFetch(
+    apiUrl(`/api/v1/trips/${encodeURIComponent(tripId)}/selections`),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        option_id: optionId,
+        selection_type: selectionType,
+        expected_trip_version: expectedVersion,
+        ...(confirmedFinalPrice ? { confirmed_final_price: confirmedFinalPrice } : {}),
+        ...(bookingReference ? { booking_reference: bookingReference } : {}),
+      }),
+    },
+  );
+  if (r.status === 409) throw new Error("STALE_TRIP_STATE");
+  if (!r.ok) throw new Error("Could not save selection");
+  return normalizePlan((await r.json()) as ApiTripPlanResponse);
 }
 
 // Backward-compatible fallback for stateless explore

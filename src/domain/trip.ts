@@ -210,6 +210,14 @@ export interface BudgetBreakdown {
   withinBudget: boolean;
 }
 
+export interface UserSelection {
+  optionId: string;
+  selectionType: "selected_flight" | "selected_hotel" | "confirmed_flight" | "confirmed_hotel";
+  confirmedPrice?: Money;
+  reference?: string;
+  confirmedAt?: string;
+}
+
 export interface ExploreRequest {
   interests: string[];
   window: TimeWindow;
@@ -228,4 +236,5 @@ export interface TripPlan {
   weather?: WeatherForecast;
   freeTimeWindows: TimeWindow[];
   warnings: string[];
+  selections: UserSelection[];
 }
