@@ -32,3 +32,7 @@ The next graph expansion separates flights, hotels, places, weather, routes, can
 Provider errors will be normalized as `TIMEOUT`, `RATE_LIMITED`, `AUTH_FAILED`, `INVALID_REQUEST`, `NO_RESULTS`, `PROVIDER_DOWN`, `STALE_RESULT`, or `UNKNOWN`. Authentication and validation failures are not retried. Timeouts and server failures are bounded to two retries. Partial provider success remains a valid plan result.
 
 No prompts, hidden reasoning, or chain-of-thought are stored. Agent-run and tool-call records contain only inputs, output summaries, timing, status, retries, and errors.
+
+## Durable trip boundary
+
+The graph remains unaware of Supabase. After it returns a validated plan, the API's `TripRepository` persists the trip under the verified Supabase principal. Reloading reconstructs the domain plan from root, preferences, options and itinerary rows, with budget and free windows recomputed deterministically. Explorer and Add to Today read that stored state, not a browser-supplied plan. Add and undo use an expected trip version and a security-invoker PostgreSQL function so the item change and version bump commit together. The model does not authorize users or override these checks.

@@ -1,5 +1,26 @@
 # Failure analysis
 
+## Phase E persistence security preflight
+
+- **Failure:** the first Phase E draft accepted synthetic test tokens outside test mode and silently fell back to an in-memory repository without Supabase configuration.
+- **Root cause:** development shortcuts were reachable from production code paths.
+- **Fix:** synthetic tokens are limited to explicit `APP_ENV=test`; production fails closed when Supabase is unconfigured.
+- **Regression:** auth tests check test-only tokens and request-scoped clients. Live auth remains unverified.
+
+## UUID schema rejected planner IDs
+
+- **Failure:** the draft planner emitted `trip_...` and `day...` IDs while existing trip and itinerary primary keys are UUIDs.
+- **Root cause:** plan IDs were designed before persistence was connected.
+- **Fix:** both IDs are generated as UUID strings. The normalizer and UI still treat them as opaque IDs.
+- **Regression:** the fake repository/API flow passes; a real database insert remains to be tested.
+
+## Explorer had no unscheduled demo candidates
+
+- **Failure:** the initial ₹30k Goa API smoke run showed one free window but zero Explorer options.
+- **Root cause:** the planner scheduled every place returned by the three-place demo fixture, leaving none to discover.
+- **Fix:** the demo fixture now includes two nearby optional places, and planning reserves two candidates for on-trip exploration.
+- **Regression:** the smoke run returns two recommendations and a successful server-side add.
+
 ## Null provider ID passed normalization
 
 - **Failure:** the first malformed-record test accepted a Google result with `id: null` and created the internal ID `google:None`.

@@ -1,5 +1,16 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/auth/auth-provider";
+import { AuthModal } from "@/components/auth-modal";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertTriangle,
@@ -36,16 +47,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import { createTripPlan, exploreNearbyPlaces, type TripPlanResponse } from "@/lib/trip-api";
 import {
-  createItineraryItemFromRecommendation,
-  deriveDisplayBudget,
+  addPlaceToTrip,
+  createTripPlan,
+  exploreTrip,
+  getTrip,
+  listTrips,
+  removeAddedItineraryItem,
+  type TripPlanResponse,
+} from "@/lib/trip-api";
+import {
   formatDateRange,
   formatDuration,
   formatTime,
   getSourceSummary,
-  mergeItinerary,
-  remainingWindow,
   tripDayCount,
   weatherSummary,
 } from "@/lib/trip-display";
@@ -81,7 +96,10 @@ type TripContextValue = {
   displayItinerary: ItineraryItem[];
   displayBudget: BudgetBreakdown | null;
   addedRecommendations: PlaceRecommendation[];
-  addRecommendation: (value: PlaceRecommendation) => void;
+  addRecommendation: (value: PlaceRecommendation) => Promise<void>;
+  removeRecommendation: (itemId: string) => Promise<void>;
+  addingPlace: boolean;
+  tripLoadError: string | null;
   delayOpen: boolean;
   setDelayOpen: (value: boolean) => void;
 };
@@ -89,18 +107,62 @@ type TripContextValue = {
 const TripContext = createContext<TripContextValue | null>(null);
 
 export function TripProvider({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const previousUserId = useRef<string | null>(null);
   const [stage, setStage] = useState<AppStage>("prompt");
   const [view, setView] = useState<TripView>("overview");
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const [activeFreeTimeWindowIndex, setActiveFreeTimeWindowIndex] = useState(0);
-  const [addedRecommendations, setAddedRecommendations] = useState<PlaceRecommendation[]>([]);
-  const [locallyAddedItems, setLocallyAddedItems] = useState<ItineraryItem[]>([]);
+  const [addingPlace, setAddingPlace] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [delayOpen, setDelayOpen] = useState(false);
   const [plan, setPlan] = useState<TripPlanResponse | null>(null);
   const [planningError, setPlanningError] = useState<string | null>(null);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
+  useEffect(() => {
+    const userId = auth.user?.id ?? null;
+    if (previousUserId.current !== userId) {
+      previousUserId.current = userId;
+      setPlan(null);
+      setStage("prompt");
+      queryClient.removeQueries({ queryKey: ["trip"] });
+    }
+  }, [auth.user?.id, queryClient]);
+  const tripId = /^\/trips\/([^/]+)/.exec(location.pathname)?.[1];
+  const persistedTrip = useQuery({
+    queryKey: ["trip", auth.user?.id, tripId],
+    queryFn: () => getTrip(tripId!),
+    enabled: Boolean(tripId && auth.user && !auth.loading),
+  });
+  useEffect(() => {
+    if (persistedTrip.data) {
+      setPlan(persistedTrip.data);
+      setStage("trip");
+    }
+  }, [persistedTrip.data]);
+  useEffect(() => {
+    if (tripId && !auth.loading && !auth.user) setAuthOpen(true);
+  }, [tripId, auth.loading, auth.user]);
+  useEffect(() => {
+    if (auth.user && pendingPrompt) {
+      const prompt = pendingPrompt;
+      setPendingPrompt(null);
+      setAuthOpen(false);
+      void startPlanning(prompt);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user, pendingPrompt]);
 
   const startPlanning = async (prompt: string) => {
+    if (!auth.user) {
+      setPendingPrompt(prompt);
+      setAuthOpen(true);
+      return;
+    }
     setPlanningError(null);
     setFollowUpQuestion(null);
     setStage("planning");
@@ -112,36 +174,68 @@ export function TripProvider({ children }: { children: ReactNode }) {
         return;
       }
       setPlan(response);
-      setAddedRecommendations([]);
-      setLocallyAddedItems([]);
+      queryClient.setQueryData(["trip", auth.user.id, response.trip.id], response);
+      void queryClient.invalidateQueries({ queryKey: ["trips", auth.user.id] });
       setActiveFreeTimeWindowIndex(0);
       setSelectedStopId(response.itinerary[0]?.id ?? null);
       setStage("trip");
+      void navigate({ to: "/trips/$tripId", params: { tripId: response.trip.id } });
     } catch (error) {
       setPlanningError(error instanceof Error ? error.message : "Trip planning failed");
     }
   };
-  const displayItinerary = useMemo(
-    () => mergeItinerary(plan?.itinerary ?? [], locallyAddedItems),
-    [plan, locallyAddedItems],
-  );
-  const displayBudget = useMemo(
-    () => (plan ? deriveDisplayBudget(plan.budget, locallyAddedItems) : null),
-    [plan, locallyAddedItems],
-  );
+  const displayItinerary = plan?.itinerary ?? [];
+  const displayBudget = plan?.budget ?? null;
   const activeFreeTimeWindow = useMemo(() => {
     const original = plan?.freeTimeWindows[activeFreeTimeWindowIndex];
-    return original ? remainingWindow(original, locallyAddedItems) : null;
-  }, [plan, activeFreeTimeWindowIndex, locallyAddedItems]);
-  const addRecommendation = (recommendation: PlaceRecommendation) => {
-    if (!recommendation.feasible || !activeFreeTimeWindow) return;
-    const placeId = recommendation.place.placeId;
-    if (displayItinerary.some((item) => item.placeId === placeId)) return;
-    if (displayBudget && recommendation.place.price.amount > displayBudget.remaining) return;
-    const item = createItineraryItemFromRecommendation(recommendation, activeFreeTimeWindow);
-    setLocallyAddedItems((current) => [...current, item]);
-    setAddedRecommendations((current) => [...current, recommendation]);
-    setSelectedStopId(item.id);
+    return original ?? null;
+  }, [plan, activeFreeTimeWindowIndex]);
+  const addRecommendation = async (recommendation: PlaceRecommendation) => {
+    if (!recommendation.feasible || !activeFreeTimeWindow || !plan || addingPlace) return;
+    setAddingPlace(true);
+    try {
+      const updated = await addPlaceToTrip(
+        plan.trip.id,
+        recommendation.place.placeId,
+        activeFreeTimeWindow,
+        plan.trip.version,
+      );
+      setPlan(updated);
+      setSelectedStopId(
+        updated.itinerary.find((item) => item.placeId === recommendation.place.placeId)?.id ?? null,
+      );
+      queryClient.setQueryData(["trip", auth.user?.id, plan.trip.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["trip-explorer", plan.trip.id] });
+      void queryClient.invalidateQueries({ queryKey: ["trips", auth.user?.id] });
+    } catch (error) {
+      if (error instanceof Error && error.message === "STALE_TRIP_STATE") {
+        const fresh = await getTrip(plan.trip.id);
+        setPlan(fresh);
+        setPlanningError("The itinerary changed. TripPilot refreshed the latest plan.");
+      } else {
+        setPlanningError(error instanceof Error ? error.message : "Could not add this place");
+      }
+    } finally {
+      setAddingPlace(false);
+    }
+  };
+  const removeRecommendation = async (itemId: string) => {
+    if (!plan || addingPlace) return;
+    setAddingPlace(true);
+    try {
+      const updated = await removeAddedItineraryItem(plan.trip.id, itemId, plan.trip.version);
+      setPlan(updated);
+      queryClient.setQueryData(["trip", auth.user?.id, plan.trip.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["trip-explorer", plan.trip.id] });
+      void queryClient.invalidateQueries({ queryKey: ["trips", auth.user?.id] });
+    } catch (error) {
+      if (error instanceof Error && error.message === "STALE_TRIP_STATE") {
+        setPlan(await getTrip(plan.trip.id));
+      }
+      setPlanningError(error instanceof Error ? error.message : "Could not remove this activity");
+    } finally {
+      setAddingPlace(false);
+    }
   };
   const value: TripContextValue = {
     stage,
@@ -159,12 +253,24 @@ export function TripProvider({ children }: { children: ReactNode }) {
     activeFreeTimeWindow,
     displayItinerary,
     displayBudget,
-    addedRecommendations,
+    addedRecommendations: [],
     addRecommendation,
+    removeRecommendation,
+    addingPlace,
+    tripLoadError: persistedTrip.isError
+      ? persistedTrip.error instanceof Error
+        ? persistedTrip.error.message
+        : "Trip not found or you don't have access"
+      : null,
     delayOpen,
     setDelayOpen,
   };
-  return <TripContext.Provider value={value}>{children}</TripContext.Provider>;
+  return (
+    <TripContext.Provider value={value}>
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+      {children}
+    </TripContext.Provider>
+  );
 }
 
 function useTrip() {
@@ -186,6 +292,13 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 
 export function TripPrompt() {
   const { followUpQuestion, startPlanning } = useTrip();
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const recentTrips = useQuery({
+    queryKey: ["trips", auth.user?.id],
+    queryFn: listTrips,
+    enabled: Boolean(auth.user),
+  });
   const [query, setQuery] = useState(
     "Goa for 5 days, two people, ₹30k. Beaches, nightlife and history. Keep it relaxed.",
   );
@@ -195,7 +308,16 @@ export function TripPrompt() {
       <header className="mx-auto flex max-w-6xl items-center justify-between">
         <Brand />
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Compass className="size-4" /> Your trips
+          {auth.user ? (
+            <>
+              <span className="hidden sm:inline">{auth.user.email}</span>
+              <Button type="button" variant="outline" onClick={() => void auth.signOut()}>
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <span>Sign in to save trips</span>
+          )}
         </div>
       </header>
       <svg
@@ -257,6 +379,28 @@ export function TripPrompt() {
             </Button>
           </div>
         </form>
+        {auth.user && recentTrips.data && recentTrips.data.length > 0 && (
+          <section className="mt-8 w-full text-left" aria-label="Recent trips">
+            <h2 className="mb-3 text-lg font-bold">Recent trips</h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {recentTrips.data.slice(0, 4).map((recent) => (
+                <button
+                  key={recent.id}
+                  type="button"
+                  onClick={() =>
+                    void navigate({ to: "/trips/$tripId", params: { tripId: recent.id } })
+                  }
+                  className="rounded-2xl border bg-card p-4 text-left hover:border-primary"
+                >
+                  <span className="font-bold">{recent.destination}</span>
+                  <span className="mt-1 block text-sm text-muted-foreground">
+                    {formatDateRange(recent.startDate, recent.endDate)} · {recent.status}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           {chips.map((chip) => (
             <button
@@ -779,6 +923,17 @@ function RouteThread() {
               </p>
             </div>
           </button>
+          {stop.source === "user_added" && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={trip.addingPlace}
+              onClick={() => void trip.removeRecommendation(stop.id)}
+              className="mt-1 text-sm"
+            >
+              Undo added activity
+            </Button>
+          )}
           {trip.plan?.freeTimeWindows.map(
             (window, windowIndex) =>
               stop.endAt === window.startAt && (
@@ -792,14 +947,8 @@ function RouteThread() {
 }
 
 function FreeTimeCard({ windowIndex }: { windowIndex: number }) {
-  const { setView, plan, setActiveFreeTimeWindowIndex, displayItinerary } = useTrip();
-  const original = plan?.freeTimeWindows[windowIndex];
-  const window = original
-    ? remainingWindow(
-        original,
-        displayItinerary.filter((item) => item.id.startsWith("local-")),
-      )
-    : null;
+  const { setView, plan, setActiveFreeTimeWindowIndex } = useTrip();
+  const window = plan?.freeTimeWindows[windowIndex];
   if (!window) return null;
   const start = formatTime(window.startAt);
   const end = formatTime(window.endAt);
@@ -878,6 +1027,7 @@ function SmartExplorer() {
     queryKey: [
       "trip-explorer",
       trip.plan?.trip.id,
+      trip.plan?.trip.version,
       window?.startAt,
       window?.endAt,
       window?.origin.lat,
@@ -888,16 +1038,7 @@ function SmartExplorer() {
       excludedPlaceIds.join("|"),
       trip.displayBudget?.remaining,
     ],
-    queryFn: ({ signal }) =>
-      exploreNearbyPlaces(
-        {
-          interests,
-          window: window!,
-          excludedPlaceIds,
-          ...(trip.displayBudget ? { remainingBudget: trip.displayBudget.remaining } : {}),
-        },
-        signal,
-      ),
+    queryFn: ({ signal }) => exploreTrip(trip.plan!.trip.id, window!, interests, signal),
     enabled: Boolean(trip.plan && window),
   });
   const liveRecommendations = explorer.data ?? [];
@@ -1041,6 +1182,7 @@ function SmartExplorer() {
                           (added) => added.placeId === item.place.placeId,
                         ) ||
                         !item.feasible ||
+                        trip.addingPlace ||
                         item.place.price.amount > (trip.displayBudget?.remaining ?? 0)
                       }
                       onClick={(event) => {
@@ -1608,7 +1750,33 @@ function ScheduleColumn({
 }
 
 export function TripPilotApp() {
-  const { stage } = useTrip();
+  const { stage, tripLoadError } = useTrip();
+  const auth = useAuth();
+  const location = useLocation();
+  if (auth.loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        Restoring your session…
+      </main>
+    );
+  }
+  if (location.pathname.startsWith("/trips/") && tripLoadError) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-4">
+        <p role="alert">Trip not found or you don't have access.</p>
+        <Button asChild>
+          <a href="/">Back to your trips</a>
+        </Button>
+      </main>
+    );
+  }
+  if (location.pathname.startsWith("/trips/") && auth.user && stage !== "trip") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        Loading your trip…
+      </main>
+    );
+  }
   return (
     <AnimatePresence mode="wait">
       <motion.div

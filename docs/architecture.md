@@ -12,7 +12,8 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 - **Routes:** `ROUTES_PROVIDER=google` uses Google Routes and matrix responses. Missing or invalid durations fail closed.
 - **Weather:** `WEATHER_PROVIDER=weatherapi` uses WeatherAPI. Forecasts beyond the 14-day horizon report `not_available_yet` without an API call.
 - **Planning services:** budget arithmetic, schedule validation, opening-hour checks, free-time feasibility, weather suitability, and outbound URL validation do not depend on an LLM.
-- **Database:** the Supabase migration creates trip, option, itinerary, event, alert, run, and tool-call records. RLS is enabled and browser roles are denied until authenticated ownership policies are introduced.
+- **Identity:** browser Supabase Auth obtains a session; FastAPI calls Auth `get_user(jwt)` before protected operations.
+- **Database:** each FastAPI request creates a Supabase Data API client authenticated with that user's JWT. The second migration grants authenticated access and RLS restricts root and child rows to owned trips. The service-role key is never used for ordinary trip CRUD.
 
 ## Request flow
 
@@ -20,8 +21,8 @@ TripPilot keeps the existing TanStack Start/React interface and places all factu
 2. FastAPI builds a typed planning state and invokes the LangGraph workflow.
 3. Independent provider searches run concurrently. Flight and hotel searches remain demo-only.
 4. The planner creates itinerary candidates and runs schedule and budget validation.
-5. A typed `TripPlan` is returned and normalized into the frontend domain model.
-6. All screens read one normalized plan. Local Add to Today creates an in-memory itinerary item and derives the displayed budget and remaining free window without mutating the server response.
+5. The validated `TripPlan` is persisted as an owned root trip, preferences, options, and itinerary before it is returned.
+6. Direct `/trips/{id}` navigation rehydrates the normalized plan. Explorer loads server state; Add to Today rechecks version, window, route, schedule and budget before an atomic security-invoker mutation increments the version.
 
 ```text
 React / TanStack Query
@@ -39,7 +40,7 @@ TimeWindow → nearby Places → route matrix → opening-hour check
 
 ## Deployment shape
 
-The frontend can deploy to Vercel or Cloudflare-compatible hosting. The Python service can deploy to Railway, Render, or another ASGI host. The Supabase schema exists, but persistence wiring is pending. Configure the frontend with `VITE_TRIPPILOT_API_URL`; configure the backend only with server-side secrets described in `.env.example`.
+The frontend can deploy to Vercel or Cloudflare-compatible hosting. The Python service can deploy to Railway, Render, or another ASGI host. Configure the frontend with `VITE_TRIPPILOT_API_URL` and the Supabase publishable browser values; configure the backend with Supabase URL/publishable key and server-side provider secrets described in `.env.example`. The Phase E migration still requires deployment and live RLS verification.
 
 No browser code calls OpenRouter, Google, flight, hotel, weather, or Supabase service-role APIs directly.
 

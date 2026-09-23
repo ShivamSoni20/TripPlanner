@@ -18,12 +18,13 @@ The repository preserves the original Sunlit Cartography + Soft Bento interface 
 - WeatherAPI adapter with normalized daily/hourly forecasts and alerts; dates 14 or more days ahead return `not_available_yet`
 - Smart Explorer combines backend Places, Routes, opening-hour checks, hard time/budget feasibility, and weather suitability
 - Explorer cards and Route Thread render normalized backend results; filters issue distinct backend queries
-- Generic Add to Today updates an in-memory itinerary, free window, and shared budget display
+- Add to Today revalidates a server-derived free window and persists a versioned itinerary mutation
+- Supabase email magic-link and Google OAuth UI, recent trips, and reloadable `/trips/{id}` URLs
 - Centralized domain models and deterministic budget/schedule validation
 - Free-time feasibility, place scoring, and outbound-link security services
 - Shared frontend plan state and recoverable backend error UI
 - Responsive existing views for trip, explorer, inventory, map, budget, alerts, and re-planning
-- Supabase migration with RLS and a server-only access posture
+- Supabase ownership RLS migration, request-scoped user JWT Data API access, and atomic add/undo functions
 - Backend unit/API tests and frontend/backend CI
 
 ## Architecture
@@ -37,7 +38,7 @@ FastAPI → LangGraph planning workflow
               └── deterministic planning services
         │
         ▼
-Supabase PostgreSQL schema (persistence integration pending)
+Supabase Auth + PostgreSQL (user-scoped RLS)
 ```
 
 OpenRouter performs structured constraint extraction when live mode is configured. Providers supply facts; deterministic code owns arithmetic, time, route feasibility, opening-hour checks, and URL safety. Booking occurs externally. The current disruption comparison is an explicitly labeled demo preview and does not modify a plan.
@@ -46,11 +47,11 @@ Read [architecture](docs/architecture.md), [agent design](docs/agent-system.md),
 
 ## Local development
 
-Prerequisites: Node.js 22+, Bun or npm, and Python 3.12+.
+Prerequisites: Node.js 22+ and Python 3.12+.
 
 ```powershell
 Copy-Item .env.example .env
-bun install
+npm ci
 python -m venv backend/.venv
 backend/.venv/Scripts/python.exe -m pip install -e "backend[dev]"
 ```
@@ -64,23 +65,23 @@ backend/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir backend --rel
 Run the frontend separately:
 
 ```powershell
-bun run dev
+npm run dev
 ```
 
-The browser defaults to `http://localhost:8000`; override it with `VITE_TRIPPILOT_API_URL`.
+The browser defaults to `http://localhost:8000`; override it with `VITE_TRIPPILOT_API_URL`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` for browser sign-in and matching backend `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` for verified JWT and user-scoped persistence. Enable email OTP and/or Google OAuth and allow your frontend callback origin in Supabase Auth.
 
 ## Environment and security
 
 Copy `.env.example` and fill only the providers you use. Key settings include `TRAVEL_DATA_MODE`, `PLACES_PROVIDER`, OpenRouter/model values, database/Supabase values, Google and weather credentials, optional travel inventory credentials, and LangSmith observability values. For Google mode, enable Places API (New), restrict the key to that API and the deployed backend where practical, then set `GOOGLE_MAPS_API_KEY` server-side.
 
-Never expose provider secrets or `SUPABASE_SERVICE_ROLE_KEY` through `VITE_` variables. The browser calls only TripPilot's backend.
+The frontend never receives the service-role key and cannot choose `user_id`. FastAPI verifies the bearer token with Supabase Auth, then creates a new Data API client with that user's JWT for each request. Database RLS independently enforces ownership; a copied trip ID alone grants no access. The service-role key is reserved for trusted administration and is not used for trip CRUD. Never expose provider secrets through `VITE_` variables.
 
 ## Quality checks
 
 ```powershell
-bun run lint
-bun run typecheck
-bun run build
+npm run lint
+npm run typecheck
+npm run build
 backend/.venv/Scripts/python.exe -m ruff format --check backend
 backend/.venv/Scripts/python.exe -m ruff check backend
 backend/.venv/Scripts/python.exe -m pytest backend -q
@@ -90,13 +91,13 @@ The backend suite contains correctness and API tests. See [evaluation](docs/eval
 
 ## Database
 
-The timestamped migration under `supabase/migrations/` creates the initial schema. Apply it through a linked Supabase CLI project or your normal migration pipeline. Every public table has RLS enabled; `anon` and `authenticated` access is revoked until authentication and ownership policies are implemented.
+Apply both migrations under `supabase/migrations/` in order. Phase E fixes `mixed` data mode, adds ownership/version/source metadata, authenticated grants, RLS policies, and security-invoker atomic add/undo functions. It stops if existing trips have a null owner; assign those owners safely before retrying. The local environment has no TripPilot Supabase project or credentials, so these SQL changes have not been applied or live-tested here.
 
 ## Deployment
 
 - Deploy the frontend to Vercel or another TanStack Start-compatible runtime and set `VITE_TRIPPILOT_API_URL`.
 - Deploy `backend/` to Railway, Render, or another ASGI host using `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-- Create a Supabase project and apply the migration before enabling persistence.
+- Connect a TripPilot Supabase project, apply both migrations, and configure email/Google Auth redirect URLs before enabling persistence.
 - Restrict backend CORS to deployed frontend origins.
 
 ## Known limitations
@@ -105,7 +106,7 @@ The timestamped migration under `supabase/migrations/` creates the initial schem
 - Google Places and Routes require `GOOGLE_MAPS_API_KEY`; WeatherAPI requires `WEATHER_API_KEY`. Live calls have not been verified on this host because those keys are unavailable.
 - Flights and hotels remain demo providers; for other origins/destinations they return no fixture inventory.
 - The map is an explicitly schematic visual, not geographic rendering.
-- Add to Today is local/in-memory and resets on refresh. The disruption view is a demo preview, not a persisted re-plan.
-- Authentication, ownership policies, full evaluations, and browser end-to-end tests remain incomplete.
+- The authenticated persistence code and RLS migration are implemented but live Supabase sign-in, two-user RLS, and browser reload flows could not be verified without a TripPilot project and credentials. Fake-repository tests are not live RLS proof.
+- The disruption view is a demo preview, not a persisted re-plan. Full evaluations and browser end-to-end tests remain incomplete.
 
 TripPilot never processes payments or issues tickets. Purchases happen on approved external provider sites.

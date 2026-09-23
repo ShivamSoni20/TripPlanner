@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     trip_agent_model: str = "openai/gpt-4.1-mini"
     database_url: str | None = None
+    supabase_url: str | None = None
+    supabase_publishable_key: str | None = None
+    supabase_service_role_key: str | None = None
     google_maps_api_key: str | None = None
     weather_api_key: str | None = None
     request_timeout_seconds: float = Field(default=12, ge=1, le=60)

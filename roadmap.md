@@ -9,8 +9,8 @@
 | WeatherAPI adapter and forecast horizon | Complete; needs key for live verification |
 | Route and weather aware Smart Explorer | Complete |
 | Backend itinerary and inventory rendering | Complete |
-| Local Add to Today with shared budget | Complete; in-memory only |
-| Supabase persistence and ownership | Pending |
+| Durable Add to Today/undo with shared budget | Implemented; live Supabase verification pending |
+| Supabase auth, persistence and ownership RLS | Implemented; migration and two-user live test pending |
 | Live flights and hotels | Pending |
 | Geographic map rendering | Pending |
 | Persisted disruption repair and approval | Pending |

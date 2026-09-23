@@ -58,6 +58,7 @@ class Trip(BaseModel):
     created_at: datetime
     updated_at: datetime
     data_mode: str = "demo"
+    version: int = Field(default=1, ge=1)
 
 
 class FlightOption(BaseModel):
@@ -225,6 +226,7 @@ class ItineraryItem(BaseModel):
     place_id: str | None = None
     cost: Money = Field(default_factory=lambda: Money(amount=0))
     travel_from_previous_minutes: int = Field(default=0, ge=0)
+    source: str = "planned"
 
     @model_validator(mode="after")
     def times_are_ordered(self) -> "ItineraryItem":

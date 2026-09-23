@@ -53,7 +53,9 @@ class TripPlanner:
             self.places.search(constraints),
         )
 
-        itinerary = await self._build_route_aware_itinerary(constraints, places)
+        # Keep a small pool for on-trip discovery instead of scheduling every candidate.
+        itinerary_candidates = places[:-2] if len(places) >= 5 else places
+        itinerary = await self._build_route_aware_itinerary(constraints, itinerary_candidates)
         weather = None
         warnings: list[str] = []
         if places:
@@ -81,7 +83,7 @@ class TripPlanner:
         )
         now = datetime.now(UTC)
         trip = Trip(
-            id=f"trip_{uuid4().hex[:12]}",
+            id=str(uuid4()),
             constraints=constraints,
             status=TripStatus.READY,
             created_at=now,
@@ -145,7 +147,7 @@ class TripPlanner:
                 visit_min = place.suggested_visit_minutes or 60
                 end_at = start_at + timedelta(minutes=visit_min)
 
-                item_id = f"day{d + 1}-item{i + 1}-{place.place_id.replace(':', '_')}"
+                item_id = str(uuid4())
                 items.append(
                     ItineraryItem(
                         id=item_id,
@@ -160,6 +162,8 @@ class TripPlanner:
                     )
                 )
                 prev_location = place.location
-                current_time = end_at + timedelta(minutes=30)  # 30 min buffer
+                # Relaxed trips reserve a genuine midday free-time window after the first stop.
+                rest_minutes = 150 if pace == "relaxed" and i == 0 else 30
+                current_time = end_at + timedelta(minutes=rest_minutes)
 
         return items

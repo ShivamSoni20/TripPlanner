@@ -1,4 +1,4 @@
-import type {
+import {
   BudgetBreakdown,
   DataSourceStatus,
   ExploreRequest,
@@ -8,49 +8,59 @@ import type {
   ItineraryItem,
   Money,
   OpeningHours,
+  OpeningPeriod,
   PlaceCandidate,
   PlaceRecommendation,
   TimeWindow,
   Trip,
+  TripPlan,
   WeatherAssessment,
-  WeatherAvailability,
   WeatherForecast,
-} from "@/domain/trip";
+} from "../domain/trip";
+import { supabase } from "./supabase";
 
-export interface TripPlanResponse {
-  trip: Trip;
-  flights: FlightOption[];
-  hotels: HotelOption[];
-  places: PlaceCandidate[];
-  itinerary: ItineraryItem[];
-  budget: BudgetBreakdown;
-  sources: DataSourceStatus;
-  warnings: string[];
-  freeTimeWindows: TimeWindow[];
-  weather?: WeatherForecast;
-}
-export interface NeedsInputResponse {
+export interface MissingInformationResponse {
   status: "needs_input";
   missing: string[];
   question: string;
 }
-export type PlanningResponse = TripPlanResponse | NeedsInputResponse;
 
-type ApiMoney = { amount: number; currency: string };
-type ApiGeo = { lat: number; lng: number };
-type ApiOpeningHours = {
+export type PlanningResponse = TripPlan | MissingInformationResponse;
+export type TripPlanResponse = TripPlan;
+
+export interface TripSummary {
+  id: string;
+  destination: string;
+  origin: string;
+  startDate: string;
+  endDate: string;
   status: string;
-  periods: Array<{
-    open_day: number;
-    open_hour: number;
-    open_minute: number;
-    close_day?: number | null;
-    close_hour?: number | null;
-    close_minute?: number | null;
-  }>;
+  version: number;
+  updatedAt: string;
+}
+
+interface ApiMoney {
+  amount: number;
+  currency: string;
+}
+interface ApiGeo {
+  lat: number;
+  lng: number;
+}
+interface ApiPeriod {
+  open_day: number;
+  open_hour: number;
+  open_minute: number;
+  close_day?: number | null;
+  close_hour?: number | null;
+  close_minute?: number | null;
+}
+interface ApiHours {
+  status: string;
+  periods: ApiPeriod[];
   weekday_descriptions: string[];
-};
-type ApiPlace = {
+}
+interface ApiPlace {
   place_id: string;
   provider: string;
   provider_id?: string | null;
@@ -63,7 +73,7 @@ type ApiPlace = {
   price: ApiMoney;
   maps_url?: string | null;
   open_now?: boolean | null;
-  opening_hours?: ApiOpeningHours | null;
+  opening_hours?: ApiHours | null;
   formatted_address?: string | null;
   price_level?: string | null;
   photo_reference?: string | null;
@@ -71,34 +81,9 @@ type ApiPlace = {
   suggested_visit_minutes: number;
   weather_suitability: number;
   interest_tags: string[];
-};
-type ApiFlight = {
-  id: string;
-  airline: string;
-  departure_airport: string;
-  arrival_airport: string;
-  departure_time: string;
-  arrival_time: string;
-  duration_minutes: number;
-  stops: number;
-  price: ApiMoney;
-  provider: string;
-  booking_url?: string | null;
-  retrieved_at: string;
-};
-type ApiHotel = {
-  id: string;
-  name: string;
-  location: ApiGeo;
-  rating?: number | null;
-  total_price: ApiMoney;
-  nightly_price?: ApiMoney | null;
-  amenities: string[];
-  provider: string;
-  booking_url?: string | null;
-  retrieved_at: string;
-};
-type ApiItem = {
+}
+
+interface ApiItineraryItem {
   id: string;
   title: string;
   category: string;
@@ -108,62 +93,24 @@ type ApiItem = {
   place_id?: string | null;
   cost: ApiMoney;
   travel_from_previous_minutes: number;
-};
-type ApiWindow = {
+  source?: string;
+}
+
+interface ApiTimeWindow {
   start_at: string;
   end_at: string;
   origin: ApiGeo;
   next_destination?: ApiGeo | null;
   duration_minutes: number;
-};
-type ApiWeather = {
-  availability: WeatherAvailability;
-  location: ApiGeo;
-  timezone?: string | null;
-  days: Array<{
-    date: string;
-    min_temperature_c?: number | null;
-    max_temperature_c?: number | null;
-    condition_text: string;
-    condition_code?: number | null;
-    chance_of_rain?: number | null;
-    total_precipitation_mm?: number | null;
-    max_wind_kph?: number | null;
-    hours: Array<{
-      timestamp: string;
-      temperature_c?: number | null;
-      feels_like_c?: number | null;
-      condition_text: string;
-      condition_code?: number | null;
-      chance_of_rain?: number | null;
-      precipitation_mm?: number | null;
-      wind_kph?: number | null;
-    }>;
-  }>;
-  alerts: Array<{
-    headline: string;
-    severity?: string | null;
-    areas?: string | null;
-    effective_at?: string | null;
-    expires_at?: string | null;
-  }>;
-  provider: string;
-  retrieved_at: string;
-};
-type ApiWeatherAssessment = {
-  fit: WeatherAssessment["fit"];
+}
+
+interface ApiWeatherAssessment {
+  fit: "good" | "caution" | "unsuitable" | "unknown";
   score: number;
   reason: string[];
-};
-type ApiDataSourceStatus = {
-  model: string;
-  flights: string;
-  hotels: string;
-  places: string;
-  routes: string;
-  weather: string;
-};
-type ApiRecommendation = {
+}
+
+interface ApiRecommendation {
   rank: string;
   place: ApiPlace;
   travel_to_minutes: number;
@@ -176,10 +123,57 @@ type ApiRecommendation = {
   reason: string[];
   feasible: boolean;
   weather: ApiWeatherAssessment;
-};
-type ApiTripPlanResponse = {
+}
+
+interface ApiWeatherAlert {
+  headline: string;
+  severity?: string | null;
+  areas?: string | null;
+  effective_at?: string | null;
+  expires_at?: string | null;
+}
+
+interface ApiHourlyWeather {
+  timestamp: string;
+  temperature_c?: number | null;
+  feels_like_c?: number | null;
+  condition_text: string;
+  condition_code?: number | null;
+  chance_of_rain?: number | null;
+  precipitation_mm?: number | null;
+  wind_kph?: number | null;
+}
+
+interface ApiDailyWeather {
+  date: string;
+  min_temperature_c?: number | null;
+  max_temperature_c?: number | null;
+  condition_text: string;
+  condition_code?: number | null;
+  chance_of_rain?: number | null;
+  total_precipitation_mm?: number | null;
+  max_wind_kph?: number | null;
+  hours: ApiHourlyWeather[];
+}
+
+interface ApiWeather {
+  availability: "available" | "not_available_yet" | "unavailable";
+  location: ApiGeo;
+  timezone?: string | null;
+  provider: string;
+  retrieved_at: string;
+  alerts: ApiWeatherAlert[];
+  days: ApiDailyWeather[];
+}
+
+interface ApiTripPlanResponse {
   trip: {
     id: string;
+    status: "planning" | "ready" | "active" | "completed";
+    created_at: string;
+    updated_at: string;
+    data_mode: string;
+    version?: number;
     constraints: {
       origin: string;
       destination: string;
@@ -194,15 +188,35 @@ type ApiTripPlanResponse = {
         transport_preferences: string[];
       };
     };
-    status: Trip["status"];
-    created_at: string;
-    updated_at: string;
-    data_mode: string;
   };
-  flights: ApiFlight[];
-  hotels: ApiHotel[];
+  flights: Array<{
+    id: string;
+    airline: string;
+    departure_airport: string;
+    arrival_airport: string;
+    departure_time: string;
+    arrival_time: string;
+    duration_minutes: number;
+    stops: number;
+    price: ApiMoney;
+    provider: string;
+    booking_url?: string | null;
+    retrieved_at: string;
+  }>;
+  hotels: Array<{
+    id: string;
+    name: string;
+    location: ApiGeo;
+    rating?: number | null;
+    total_price: ApiMoney;
+    nightly_price?: ApiMoney | null;
+    amenities: string[];
+    provider: string;
+    booking_url?: string | null;
+    retrieved_at: string;
+  }>;
   places: ApiPlace[];
-  itinerary: ApiItem[];
+  itinerary: ApiItineraryItem[];
   budget: {
     transport: number;
     hotel: number;
@@ -214,31 +228,28 @@ type ApiTripPlanResponse = {
     currency: string;
     within_budget: boolean;
   };
-  sources: ApiDataSourceStatus;
+  sources: {
+    model: string;
+    flights: string;
+    hotels: string;
+    places: string;
+    routes: string;
+    weather: string;
+  };
   weather?: ApiWeather | null;
-  free_time_windows?: ApiWindow[];
+  free_time_windows?: ApiTimeWindow[];
   warnings: string[];
-};
-const money = (v: ApiMoney): Money => ({ amount: v.amount, currency: v.currency });
-const geo = (v: ApiGeo): GeoPoint => ({ lat: v.lat, lng: v.lng });
-function opening(v?: ApiOpeningHours | null): OpeningHours | undefined {
-  return v
-    ? {
-        status: v.status,
-        weekdayDescriptions: v.weekday_descriptions,
-        periods: v.periods.map((p) => ({
-          openDay: p.open_day,
-          openHour: p.open_hour,
-          openMinute: p.open_minute,
-          ...(p.close_day != null ? { closeDay: p.close_day } : {}),
-          ...(p.close_hour != null ? { closeHour: p.close_hour } : {}),
-          ...(p.close_minute != null ? { closeMinute: p.close_minute } : {}),
-        })),
-      }
-    : undefined;
 }
+
+function money(v: ApiMoney): Money {
+  return { amount: v.amount, currency: v.currency };
+}
+
+function geo(v: ApiGeo): GeoPoint {
+  return { lat: v.lat, lng: v.lng };
+}
+
 function normalizePlaceCandidate(v: ApiPlace): PlaceCandidate {
-  const hours = opening(v.opening_hours);
   return {
     placeId: v.place_id,
     provider: v.provider,
@@ -252,7 +263,22 @@ function normalizePlaceCandidate(v: ApiPlace): PlaceCandidate {
     price: money(v.price),
     ...(v.maps_url ? { mapsUrl: v.maps_url } : {}),
     ...(v.open_now != null ? { openNow: v.open_now } : {}),
-    ...(hours ? { openingHours: hours } : {}),
+    ...(v.opening_hours
+      ? {
+          openingHours: {
+            status: v.opening_hours.status,
+            weekdayDescriptions: v.opening_hours.weekday_descriptions,
+            periods: v.opening_hours.periods.map((p) => ({
+              openDay: p.open_day,
+              openHour: p.open_hour,
+              openMinute: p.open_minute,
+              ...(p.close_day != null ? { closeDay: p.close_day } : {}),
+              ...(p.close_hour != null ? { closeHour: p.close_hour } : {}),
+              ...(p.close_minute != null ? { closeMinute: p.close_minute } : {}),
+            })),
+          },
+        }
+      : {}),
     ...(v.formatted_address ? { formattedAddress: v.formatted_address } : {}),
     ...(v.price_level ? { priceLevel: v.price_level } : {}),
     ...(v.photo_reference ? { photoReference: v.photo_reference } : {}),
@@ -262,10 +288,19 @@ function normalizePlaceCandidate(v: ApiPlace): PlaceCandidate {
     interestTags: v.interest_tags,
   };
 }
+
 function normalizeWeatherAssessment(value: ApiWeatherAssessment): WeatherAssessment {
   return { fit: value.fit, score: value.score, reason: [...value.reason] };
 }
-function normalizeDataSourceStatus(value: ApiDataSourceStatus): DataSourceStatus {
+
+function normalizeDataSourceStatus(value: {
+  model: string;
+  flights: string;
+  hotels: string;
+  places: string;
+  routes: string;
+  weather: string;
+}): DataSourceStatus {
   return {
     model: value.model,
     flights: value.flights,
@@ -275,6 +310,7 @@ function normalizeDataSourceStatus(value: ApiDataSourceStatus): DataSourceStatus
     weather: value.weather,
   };
 }
+
 function normalizePlaceRecommendation(v: ApiRecommendation): PlaceRecommendation {
   return {
     rank: v.rank,
@@ -291,6 +327,7 @@ function normalizePlaceRecommendation(v: ApiRecommendation): PlaceRecommendation
     weather: normalizeWeatherAssessment(v.weather),
   };
 }
+
 function normalizeWeather(v?: ApiWeather | null): WeatherForecast | undefined {
   return v
     ? {
@@ -331,7 +368,8 @@ function normalizeWeather(v?: ApiWeather | null): WeatherForecast | undefined {
       }
     : undefined;
 }
-function normalizePlan(p: ApiTripPlanResponse): TripPlanResponse {
+
+function normalizePlan(p: ApiTripPlanResponse): TripPlan {
   const c = p.trip.constraints;
   const w = normalizeWeather(p.weather);
   return {
@@ -341,6 +379,7 @@ function normalizePlan(p: ApiTripPlanResponse): TripPlanResponse {
       createdAt: p.trip.created_at,
       updatedAt: p.trip.updated_at,
       dataMode: p.trip.data_mode,
+      version: p.trip.version ?? 1,
       constraints: {
         origin: c.origin,
         destination: c.destination,
@@ -393,6 +432,7 @@ function normalizePlan(p: ApiTripPlanResponse): TripPlanResponse {
       ...(i.place_id ? { placeId: i.place_id } : {}),
       cost: money(i.cost),
       travelFromPreviousMinutes: i.travel_from_previous_minutes,
+      ...(i.source ? { source: i.source as "planned" | "user_added" | "replan" } : {}),
     })),
     budget: {
       transport: p.budget.transport,
@@ -417,19 +457,63 @@ function normalizePlan(p: ApiTripPlanResponse): TripPlanResponse {
     ...(w ? { weather: w } : {}),
   };
 }
+
 const API_URL = import.meta.env["VITE_TRIPPILOT_API_URL"] ?? "http://localhost:8000";
-const apiUrl = (path: string) => `${API_URL.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+const apiUrl = (path: string) => `${API_URL.replace(/\/$/, "")}${path}`;
+
+async function getAccessToken(): Promise<string | null> {
+  if (!supabase) return null;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
+
+async function authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
+  let token = await getAccessToken();
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  let r = await fetch(url, { ...init, headers });
+
+  if (r.status === 401 && supabase) {
+    // Attempt one session refresh if 401
+    const { data } = await supabase.auth.refreshSession();
+    if (data.session?.access_token) {
+      token = data.session.access_token;
+      headers.set("Authorization", `Bearer ${token}`);
+      r = await fetch(url, { ...init, headers });
+    }
+    if (r.status === 401) {
+      await supabase.auth.signOut();
+    }
+  }
+
+  return r;
+}
+
 export async function createTripPlan(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<PlanningResponse> {
-  const r = await fetch(apiUrl("/api/v1/trips/plan"), {
+  const r = await authorizedFetch(apiUrl("/api/v1/trips/plan"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
     ...(signal ? { signal } : {}),
   });
-  if (!r.ok) throw new Error(`Trip planning failed (${r.status})`);
+
+  if (r.status === 401) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  if (!r.ok) {
+    const errPayload = await r.json().catch(() => null);
+    throw new Error(errPayload?.detail?.message || "Trip planning failed");
+  }
+
   const payload: unknown = await r.json();
   if (
     typeof payload === "object" &&
@@ -440,21 +524,150 @@ export async function createTripPlan(
     Array.isArray(payload.missing) &&
     "question" in payload &&
     typeof payload.question === "string"
-  )
+  ) {
     return {
       status: "needs_input",
       missing: payload.missing.filter((x): x is string => typeof x === "string"),
       question: payload.question,
     };
+  }
+
   return normalizePlan(payload as ApiTripPlanResponse);
 }
+
+export async function listTrips(): Promise<TripSummary[]> {
+  const r = await authorizedFetch(apiUrl("/api/v1/trips"), { method: "GET" });
+  if (r.status === 401) throw new Error("UNAUTHORIZED");
+  if (!r.ok) throw new Error("Failed to list trips");
+  const data: Array<{
+    id: string;
+    destination: string;
+    origin: string;
+    start_date: string;
+    end_date: string;
+    status: string;
+    version: number;
+    updated_at: string;
+  }> = await r.json();
+
+  return data.map((t) => ({
+    id: t.id,
+    destination: t.destination,
+    origin: t.origin,
+    startDate: t.start_date,
+    endDate: t.end_date,
+    status: t.status,
+    version: t.version,
+    updatedAt: t.updated_at,
+  }));
+}
+
+export async function getTrip(tripId: string): Promise<TripPlan> {
+  const r = await authorizedFetch(apiUrl(`/api/v1/trips/${encodeURIComponent(tripId)}`), {
+    method: "GET",
+  });
+  if (r.status === 401) throw new Error("UNAUTHORIZED");
+  if (r.status === 404) throw new Error("Trip not found or access denied");
+  if (!r.ok) throw new Error("Failed to load trip");
+  const payload: ApiTripPlanResponse = await r.json();
+  return normalizePlan(payload);
+}
+
+export async function exploreTrip(
+  tripId: string,
+  window: TimeWindow,
+  interests: string[] = [],
+  signal?: AbortSignal,
+): Promise<PlaceRecommendation[]> {
+  const r = await authorizedFetch(apiUrl(`/api/v1/trips/${encodeURIComponent(tripId)}/explore`), {
+    method: "POST",
+    body: JSON.stringify({
+      window: {
+        start_at: window.startAt,
+        end_at: window.endAt,
+        origin: window.origin,
+        next_destination: window.nextDestination,
+        duration_minutes: window.durationMinutes,
+      },
+      interests,
+    }),
+    ...(signal ? { signal } : {}),
+  });
+
+  if (!r.ok) throw new Error("Explore request failed");
+  const payload: unknown = await r.json();
+  return Array.isArray(payload)
+    ? payload.map((item) => normalizePlaceRecommendation(item as ApiRecommendation))
+    : [];
+}
+
+export async function addPlaceToTrip(
+  tripId: string,
+  placeId: string,
+  window: TimeWindow,
+  expectedVersion: number,
+  interests: string[] = [],
+): Promise<TripPlan> {
+  const r = await authorizedFetch(
+    apiUrl(`/api/v1/trips/${encodeURIComponent(tripId)}/itinerary-items`),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        place_id: placeId,
+        window: {
+          start_at: window.startAt,
+          end_at: window.endAt,
+          origin: window.origin,
+          next_destination: window.nextDestination,
+          duration_minutes: window.durationMinutes,
+        },
+        expected_trip_version: expectedVersion,
+        interests,
+      }),
+    },
+  );
+
+  if (r.status === 409) {
+    throw new Error("STALE_TRIP_STATE");
+  }
+
+  if (!r.ok) {
+    const errPayload = await r.json().catch(() => null);
+    throw new Error(errPayload?.detail?.message || "Add place failed");
+  }
+
+  const payload: ApiTripPlanResponse = await r.json();
+  return normalizePlan(payload);
+}
+
+export async function removeAddedItineraryItem(
+  tripId: string,
+  itemId: string,
+  expectedVersion: number,
+): Promise<TripPlan> {
+  const r = await authorizedFetch(
+    apiUrl(
+      `/api/v1/trips/${encodeURIComponent(tripId)}/itinerary-items/${encodeURIComponent(itemId)}?expected_version=${expectedVersion}`,
+    ),
+    { method: "DELETE" },
+  );
+
+  if (r.status === 409) {
+    throw new Error("STALE_TRIP_STATE");
+  }
+
+  if (!r.ok) throw new Error("Remove item failed");
+  const payload: ApiTripPlanResponse = await r.json();
+  return normalizePlan(payload);
+}
+
+// Backward-compatible fallback for stateless explore
 export async function exploreNearbyPlaces(
   request: ExploreRequest,
   signal?: AbortSignal,
 ): Promise<PlaceRecommendation[]> {
-  const r = await fetch(apiUrl("/api/v1/trips/explore"), {
+  const r = await authorizedFetch(apiUrl("/api/v1/trips/explore"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       interests: request.interests,
       window: {
@@ -469,7 +682,7 @@ export async function exploreNearbyPlaces(
     }),
     ...(signal ? { signal } : {}),
   });
-  if (!r.ok) throw new Error(`Explore request failed (${r.status})`);
+  if (!r.ok) throw new Error("Explore request failed");
   const payload: unknown = await r.json();
   return Array.isArray(payload)
     ? payload.map((item) => normalizePlaceRecommendation(item as ApiRecommendation))

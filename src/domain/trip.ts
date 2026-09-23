@@ -34,6 +34,7 @@ export interface Trip {
   createdAt: string;
   updatedAt: string;
   dataMode: "demo" | "live" | "mixed" | string;
+  version: number;
 }
 
 export interface FlightOption {
@@ -112,6 +113,7 @@ export interface ItineraryItem {
   placeId?: string;
   cost: Money;
   travelFromPreviousMinutes: number;
+  source?: "planned" | "user_added" | "replan";
 }
 
 export interface TimeWindow {
@@ -213,4 +215,17 @@ export interface ExploreRequest {
   window: TimeWindow;
   excludedPlaceIds?: string[];
   remainingBudget?: number;
+}
+
+export interface TripPlan {
+  trip: Trip;
+  flights: FlightOption[];
+  hotels: HotelOption[];
+  places: PlaceCandidate[];
+  itinerary: ItineraryItem[];
+  budget: BudgetBreakdown;
+  sources: DataSourceStatus;
+  weather?: WeatherForecast;
+  freeTimeWindows: TimeWindow[];
+  warnings: string[];
 }

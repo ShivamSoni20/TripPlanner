@@ -13,6 +13,7 @@ export default tseslint.config(
       ".vinxi",
       "backend/.venv",
       "backend/.pytest_cache",
+      "backend/.pytest_cache_tmp",
       "backend/backend/.pytest_cache_tmp",
     ],
   },
