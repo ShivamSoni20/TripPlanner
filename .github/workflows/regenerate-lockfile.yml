@@ -187,7 +187,8 @@ jobs:
             for (const name of variants) {
               const matching = Object.entries(packages).filter(
                 ([candidate, native]) =>
-                  candidate.endsWith(`/node_modules/${name}`) &&
+                  (candidate === `node_modules/${name}` ||
+                   candidate.endsWith(`/node_modules/${name}`)) &&
                   native.version === pkg.version
               );
 
