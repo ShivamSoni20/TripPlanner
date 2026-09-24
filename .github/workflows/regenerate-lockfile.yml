@@ -1,0 +1,206 @@
+name: Regenerate npm lockfile on Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    name: Regenerate and verify Linux npm lockfile
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Show environment
+        run: |
+          echo "Node version:"
+          node --version
+
+          echo "npm version:"
+          npm --version
+
+          echo "Operating system:"
+          uname -a
+
+      - name: Generate lockfile from clean Linux environment
+        run: |
+          set -euxo pipefail
+
+          rm -rf node_modules
+          rm -f package-lock.json
+
+          npm install \
+            --include=optional \
+            --no-audit \
+            --no-fund
+
+          test -f package-lock.json
+
+          echo "Generated package-lock.json successfully."
+
+      - name: Inspect native dependency entries
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const lock = JSON.parse(
+            fs.readFileSync("package-lock.json", "utf8")
+          );
+
+          const packages = lock.packages ?? {};
+
+          const interesting = Object.keys(packages)
+            .filter((path) =>
+              path.includes("lightningcss") ||
+              path.includes("@tailwindcss/oxide")
+            )
+            .sort();
+
+          console.log("Resolved LightningCSS / Tailwind Oxide entries:");
+
+          for (const path of interesting) {
+            const pkg = packages[path];
+
+            console.log(
+              `${path} -> ${pkg?.version ?? "unknown"}`
+            );
+          }
+          NODE
+
+      - name: Verify Linux and Windows native lock entries
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const lock = JSON.parse(
+            fs.readFileSync("package-lock.json", "utf8")
+          );
+
+          const packages = lock.packages ?? {};
+
+          const required = [
+            "node_modules/@tailwindcss/oxide-linux-x64-gnu",
+            "node_modules/@tailwindcss/oxide-win32-x64-msvc",
+
+            "node_modules/@tailwindcss/node/node_modules/lightningcss-linux-x64-gnu",
+            "node_modules/@tailwindcss/node/node_modules/lightningcss-win32-x64-msvc",
+
+            "node_modules/lightningcss-linux-x64-gnu",
+            "node_modules/lightningcss-win32-x64-msvc"
+          ];
+
+          const missing = required.filter(
+            (path) => !packages[path]
+          );
+
+          if (missing.length > 0) {
+            console.error(
+              "package-lock.json is missing required native dependency entries:"
+            );
+
+            for (const path of missing) {
+              console.error(` - ${path}`);
+            }
+
+            process.exit(1);
+          }
+
+          console.log(
+            "All required Linux x64 and Windows x64 native lockfile entries are present."
+          );
+
+          for (const path of required) {
+            console.log(
+              `✓ ${path} (${packages[path]?.version ?? "unknown version"})`
+            );
+          }
+          NODE
+
+      - name: Save generated lockfile checksum
+        run: |
+          sha256sum package-lock.json | tee /tmp/package-lock.sha256
+
+      - name: Clean install cycle 1
+        run: |
+          set -euxo pipefail
+
+          rm -rf node_modules
+
+          npm ci \
+            --include=optional \
+            --no-audit \
+            --no-fund
+
+          sha256sum --check /tmp/package-lock.sha256
+
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Verify Linux native modules after cycle 1
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const checks = [
+            "node_modules/@tailwindcss/oxide-linux-x64-gnu",
+            "node_modules/@tailwindcss/node/node_modules/lightningcss-linux-x64-gnu",
+            "node_modules/lightningcss-linux-x64-gnu"
+          ];
+
+          let failed = false;
+
+          for (const path of checks) {
+            if (!fs.existsSync(path)) {
+              console.error(`Missing installed Linux package: ${path}`);
+              failed = true;
+            } else {
+              console.log(`✓ Installed: ${path}`);
+            }
+          }
+
+          if (failed) {
+            process.exit(1);
+          }
+          NODE
+
+      - name: Clean install cycle 2
+        run: |
+          set -euxo pipefail
+
+          rm -rf node_modules
+
+          npm ci \
+            --include=optional \
+            --no-audit \
+            --no-fund
+
+          sha256sum --check /tmp/package-lock.sha256
+
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Verify final lockfile unchanged
+        run: |
+          sha256sum --check /tmp/package-lock.sha256
+
+          echo "Lockfile remained unchanged across both npm ci cycles."
+
+      - name: Upload verified Linux-generated lockfile
+        if: ${{ always() && hashFiles('package-lock.json') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-generated-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7
