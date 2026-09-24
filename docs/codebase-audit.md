@@ -10,7 +10,7 @@
 - **Data fetching:** TanStack Query is installed and provided, but no product queries exist.
 - **State:** one React context in `trip-pilot.tsx` with six UI state values.
 - **Map:** a decorative SVG/CSS map, not a geographic provider.
-- **Deployment:** Lovable Vite configuration builds a Cloudflare-compatible Nitro bundle.
+- **Deployment:** Vite and TanStack Start build a Cloudflare-compatible Nitro bundle.
 
 ## Product status before production work
 
