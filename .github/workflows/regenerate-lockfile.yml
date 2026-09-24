@@ -149,48 +149,61 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from "node:fs";
 
-          const lock = JSON.parse(
+          const packages = JSON.parse(
             fs.readFileSync("package-lock.json", "utf8")
-          );
+          ).packages ?? {};
 
-          const packages = lock.packages ?? {};
-
-          const required = [
+          const oxideVariants = [
             "node_modules/@tailwindcss/oxide-linux-x64-gnu",
-            "node_modules/@tailwindcss/oxide-win32-x64-msvc",
-
-            "node_modules/@tailwindcss/node/node_modules/lightningcss-linux-x64-gnu",
-            "node_modules/@tailwindcss/node/node_modules/lightningcss-win32-x64-msvc",
-
-            "node_modules/lightningcss-linux-x64-gnu",
-            "node_modules/lightningcss-win32-x64-msvc"
+            "node_modules/@tailwindcss/oxide-win32-x64-msvc"
           ];
 
-          const missing = required.filter(
-            (path) => !packages[path]
-          );
-
-          if (missing.length > 0) {
-            console.error(
-              "package-lock.json is missing required native dependency entries:"
-            );
-
-            for (const path of missing) {
-              console.error(` - ${path}`);
+          for (const path of oxideVariants) {
+            if (!packages[path]) {
+              throw new Error(`Missing Tailwind native lockfile entry: ${path}`);
             }
-
-            process.exit(1);
+            console.log(`OK: ${path}@${packages[path].version}`);
           }
 
-          console.log(
-            "All required Linux x64 and Windows x64 native lockfile entries are present."
+          // npm can hoist LightningCSS and its optional native packages to
+          // root node_modules, or keep another version nested under Tailwind.
+          // Validate each resolved LightningCSS version, not a fixed path.
+          const installations = Object.entries(packages).filter(
+            ([path]) =>
+              path === "node_modules/lightningcss" ||
+              path.endsWith("/node_modules/lightningcss")
           );
 
-          for (const path of required) {
-            console.log(
-              `✓ ${path} (${packages[path]?.version ?? "unknown version"})`
-            );
+          if (installations.length === 0) {
+            throw new Error("No LightningCSS installation in lockfile");
           }
+
+          const variants = [
+            "lightningcss-linux-x64-gnu",
+            "lightningcss-win32-x64-msvc"
+          ];
+
+          for (const [path, pkg] of installations) {
+            for (const name of variants) {
+              const matching = Object.entries(packages).filter(
+                ([candidate, native]) =>
+                  candidate.endsWith(`/node_modules/${name}`) &&
+                  native.version === pkg.version
+              );
+
+              if (matching.length === 0) {
+                throw new Error(
+                  `Missing ${name}@${pkg.version} required by ${path}`
+                );
+              }
+
+              for (const [candidate] of matching) {
+                console.log(`OK: ${candidate}@${pkg.version}`);
+              }
+            }
+          }
+
+          console.log("Linux and Windows native packages are represented for every LightningCSS version.");
           NODE
 
       - name: Save manifest checksums
@@ -217,27 +230,16 @@ jobs:
       - name: Verify Linux native modules after cycle 1
         run: |
           node --input-type=module <<'NODE'
-          import fs from "node:fs";
+          import { createRequire } from "node:module";
 
-          const checks = [
-            "node_modules/@tailwindcss/oxide-linux-x64-gnu",
-            "node_modules/@tailwindcss/node/node_modules/lightningcss-linux-x64-gnu",
-            "node_modules/lightningcss-linux-x64-gnu"
-          ];
+          const require = createRequire(import.meta.url);
 
-          let failed = false;
-
-          for (const path of checks) {
-            if (!fs.existsSync(path)) {
-              console.error(`Missing installed Linux package: ${path}`);
-              failed = true;
-            } else {
-              console.log(`✓ Installed: ${path}`);
-            }
-          }
-
-          if (failed) {
-            process.exit(1);
+          // Check the real native bindings through Node resolution. npm may
+          // hoist their packages, so their filesystem locations are not fixed.
+          for (const name of ["lightningcss", "@tailwindcss/oxide"]) {
+            const resolved = require.resolve(name);
+            require(name);
+            console.log(`Native binding loaded: ${name} -> ${resolved}`);
           }
           NODE
 
