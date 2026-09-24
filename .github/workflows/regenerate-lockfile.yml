@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
 
@@ -31,21 +31,23 @@ jobs:
           echo "Operating system:"
           uname -a
 
-      - name: Generate lockfile from clean Linux environment
+      - name: Generate lockfile with AJV 8 peer resolution
         run: |
           set -euxo pipefail
 
           rm -rf node_modules
           rm -f package-lock.json
 
-          npm install \
+          npm install ajv@8.20.0 \
+            --save-exact \
             --include=optional \
             --no-audit \
             --no-fund
 
+          test -f package.json
           test -f package-lock.json
 
-          echo "Generated package-lock.json successfully."
+          echo "Generated package-lock.json with explicit AJV 8 dependency."
 
       - name: Inspect native dependency entries
         run: |
@@ -74,6 +76,72 @@ jobs:
               `${path} -> ${pkg?.version ?? "unknown"}`
             );
           }
+          NODE
+
+      - name: Validate AJV dependency graph
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const pkg = JSON.parse(
+            fs.readFileSync("package.json", "utf8")
+          );
+
+          const lock = JSON.parse(
+            fs.readFileSync("package-lock.json", "utf8")
+          );
+
+          const packages = lock.packages ?? {};
+          let failed = false;
+
+          // 1. package.json declares ajv: "8.20.0"
+          const pkgAjv = pkg.dependencies?.ajv;
+          if (pkgAjv !== "8.20.0") {
+            console.error(`FAIL: package.json ajv = "${pkgAjv}", expected "8.20.0"`);
+            failed = true;
+          } else {
+            console.log(`✓ package.json declares ajv: "${pkgAjv}"`);
+          }
+
+          // 2. lockfile root manifest declares the same
+          const lockRoot = packages[""]?.dependencies?.ajv;
+          if (lockRoot !== "8.20.0") {
+            console.error(`FAIL: lockfile root ajv = "${lockRoot}", expected "8.20.0"`);
+            failed = true;
+          } else {
+            console.log(`✓ lockfile root declares ajv: "${lockRoot}"`);
+          }
+
+          // 3. node_modules/ajv resolves to AJV 8
+          const rootAjv = packages["node_modules/ajv"];
+          if (!rootAjv || !rootAjv.version?.startsWith("8.")) {
+            console.error(`FAIL: node_modules/ajv version = "${rootAjv?.version}", expected 8.x`);
+            failed = true;
+          } else {
+            console.log(`✓ node_modules/ajv resolves to ${rootAjv.version}`);
+          }
+
+          // 4. Nested AJV 6 exists for ESLint
+          const nestedAjv6Paths = Object.keys(packages).filter(
+            (p) =>
+              p !== "node_modules/ajv" &&
+              p.endsWith("/ajv") &&
+              packages[p]?.version?.startsWith("6.")
+          );
+          if (nestedAjv6Paths.length === 0) {
+            console.error("FAIL: no nested AJV 6 found for ESLint");
+            failed = true;
+          } else {
+            for (const p of nestedAjv6Paths) {
+              console.log(`✓ nested AJV 6 at ${p} (${packages[p].version})`);
+            }
+          }
+
+          if (failed) {
+            process.exit(1);
+          }
+
+          console.log("\nAJV dependency graph is correct.");
           NODE
 
       - name: Verify Linux and Windows native lock entries
@@ -125,9 +193,9 @@ jobs:
           }
           NODE
 
-      - name: Save generated lockfile checksum
+      - name: Save manifest checksums
         run: |
-          sha256sum package-lock.json | tee /tmp/package-lock.sha256
+          sha256sum package.json package-lock.json > /tmp/npm-manifests.sha256
 
       - name: Clean install cycle 1
         run: |
@@ -140,7 +208,7 @@ jobs:
             --no-audit \
             --no-fund
 
-          sha256sum --check /tmp/package-lock.sha256
+          sha256sum --check /tmp/npm-manifests.sha256
 
           npm run lint
           npm run typecheck
@@ -184,7 +252,7 @@ jobs:
             --no-audit \
             --no-fund
 
-          sha256sum --check /tmp/package-lock.sha256
+          sha256sum --check /tmp/npm-manifests.sha256
 
           npm run lint
           npm run typecheck
@@ -192,15 +260,16 @@ jobs:
 
       - name: Verify final lockfile unchanged
         run: |
-          sha256sum --check /tmp/package-lock.sha256
+          sha256sum --check /tmp/npm-manifests.sha256
 
-          echo "Lockfile remained unchanged across both npm ci cycles."
+          echo "Both manifests remained unchanged across both npm ci cycles."
 
-      - name: Upload verified Linux-generated lockfile
-        if: ${{ always() && hashFiles('package-lock.json') != '' }}
-        uses: actions/upload-artifact@v6
+      - name: Upload verified npm manifests
+        uses: actions/upload-artifact@v4
         with:
-          name: linux-generated-package-lock
-          path: package-lock.json
+          name: verified-npm-manifests
+          path: |
+            package.json
+            package-lock.json
           if-no-files-found: error
           retention-days: 7
