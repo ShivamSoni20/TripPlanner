@@ -1,0 +1,82 @@
+
+name: Regenerate npm lockfile on Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Generate lockfile from a clean Linux environment
+        run: |
+          node --version
+          npm --version
+          rm -rf node_modules package-lock.json
+          npm install --include=optional --no-audit --no-fund
+
+      - name: Verify Linux and Windows native lock entries
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const packages = JSON.parse(
+            fs.readFileSync("package-lock.json", "utf8")
+          ).packages;
+
+          const required = [
+            "node_modules/@tailwindcss/oxide-linux-x64-gnu",
+            "node_modules/@tailwindcss/oxide-win32-x64-msvc",
+            "node_modules/@tailwindcss/node/node_modules/lightningcss/node_modules/lightningcss-linux-x64-gnu",
+            "node_modules/@tailwindcss/node/node_modules/lightningcss/node_modules/lightningcss-win32-x64-msvc",
+            "node_modules/lightningcss-linux-x64-gnu",
+            "node_modules/lightningcss-win32-x64-msvc"
+          ];
+
+          const missing = required.filter(path => !packages[path]);
+
+          if (missing.length) {
+            console.error("Missing native lockfile entries:");
+            missing.forEach(path => console.error(` - ${path}`));
+            process.exit(1);
+          }
+
+          console.log("All required Linux and Windows entries exist.");
+          NODE
+
+      - name: Verify two reproducible clean installations
+        run: |
+          sha256sum package-lock.json > /tmp/package-lock.sha
+
+          for cycle in 1 2; do
+            echo "Clean installation cycle $cycle"
+
+            rm -rf node_modules
+            npm ci --include=optional --no-audit --no-fund
+
+            npm run lint
+            npm run typecheck
+            npm run build
+
+            sha256sum --check /tmp/package-lock.sha
+          done
+
+      - name: Upload generated lockfile
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-generated-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7
