@@ -20,7 +20,9 @@ def test_synthetic_tokens_only_work_in_explicit_test_mode() -> None:
     principal = get_current_user(token, Settings(app_env="test"))
     assert principal.id == UUID("00000000-0000-0000-0000-000000000001")
     with pytest.raises(HTTPException) as error:
-        get_current_user(token, Settings(app_env="production"))
+        get_current_user(
+            token, Settings(app_env="production", supabase_url=None, supabase_publishable_key=None)
+        )
     assert error.value.status_code == 503
 
 
