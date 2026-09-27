@@ -20,6 +20,7 @@ from app.models.domain import (
     TripPlan,
 )
 from app.providers.amadeus import AmadeusClient, AmadeusFlightProvider
+from app.providers.serpapi_flights import SerpApiFlightProvider
 from app.providers.booking import BookingDemandClient, BookingHotelProvider
 from app.providers.demo import (
     DemoFlightProvider,
@@ -172,6 +173,19 @@ def get_planner() -> TripPlanner:
                 max_retries=settings.provider_max_retries,
             )
         )
+    elif settings.flights_provider == "serpapi":
+        if not settings.serpapi_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "category": "AUTH_FAILED",
+                    "message": "SERPAPI_API_KEY is required when FLIGHTS_PROVIDER=serpapi",
+                },
+            )
+        flights = SerpApiFlightProvider(
+            api_key=settings.serpapi_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
     else:
         flights = DemoFlightProvider()
 
@@ -208,7 +222,7 @@ def get_planner() -> TripPlanner:
             or settings.places_provider == "google"
             or settings.routes_provider == "google"
             or settings.weather_provider == "weatherapi"
-            or settings.flights_provider == "amadeus"
+            or settings.flights_provider in ("amadeus", "serpapi")
             or settings.hotels_provider == "booking"
         )
         else "demo"
@@ -216,7 +230,7 @@ def get_planner() -> TripPlanner:
 
     sources = DataSourceStatus(
         model=model_status,
-        flights="live" if settings.flights_provider == "amadeus" else "demo",
+        flights="live" if settings.flights_provider in ("amadeus", "serpapi") else "demo",
         hotels="live" if settings.hotels_provider == "booking" else "demo",
         places=settings.places_provider,
         routes=settings.routes_provider,

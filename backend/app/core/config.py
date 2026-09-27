@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     places_provider: Literal["demo", "google"] = "demo"
     routes_provider: Literal["demo", "google"] = "demo"
     weather_provider: Literal["demo", "weatherapi"] = "demo"
-    flights_provider: Literal["demo", "amadeus"] = "demo"
+    flights_provider: Literal["demo", "amadeus", "serpapi"] = "demo"
+    serpapi_api_key: str | None = None
     hotels_provider: Literal["demo", "booking"] = "demo"
     amadeus_env: Literal["test", "production"] = "test"
     amadeus_client_id: str | None = None
